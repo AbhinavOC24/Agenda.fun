@@ -1,6 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
+use anchor_lang::system_program::{transfer,Transfer};
 
+use anchor_spl::token::{ Mint, Token, TokenAccount, MintTo, InitializeMint, mint_to};
+use anchor_spl::associated_token::AssociatedToken;
 declare_id!("6iMHRA5osY1Yb2Gi9t4WSBxBxsaU51fgD1JPiRinNDWD");
 
 #[program]
@@ -58,7 +61,7 @@ pub mod governance {
         let fandom = &mut ctx.accounts.fandom;
         fandom.fandom_id = fandom_id;
         fandom.admin = ctx.accounts.admin.key();
-        fandom.name = name;
+        fandom.name = name.clone();
 
         emit!(FandomCreated {
             fandom_id: fandom.fandom_id,
@@ -88,7 +91,7 @@ pub mod governance {
         character.stock_mint = stock_mint;
         character.supply = supply;
         character.price_state = ctx.accounts.character_price_state.key();
-
+        character.stock_mint=ctx.accounts.stock_mint.key();
 
         let ps = &mut ctx.accounts.character_price_state;
         ps.character = char_slug;
@@ -112,23 +115,46 @@ pub mod governance {
         Ok(())
     }
 
-    pub fn buy_stock(ctx:Context<BuyStock>,fandom_id: [u8; 32],char_slug:String,lamports:u64,amount:i32)->Result<()>{
+    pub fn buy_stock(ctx:Context<BuyStock>,fandom_id: [u8; 32],char_slug:String,lamports:u64,amount:u64)->Result<()>{
         
-        let character=&mut ctx.accounts.character;
-        character.supply = character.supply.checked_add(amount).unwrap();
 
-
-        let cpi_accounts=Transfer(
+        
+        //tx sol to char treasury
+        let cpi_accounts=Transfer{
             from: ctx.accounts.buyer.to_account_info(),
             to: ctx.accounts.character_treasury.to_account_info(),
-        )
+        };
         let cpi_ctx = CpiContext::new(ctx.accounts.system_program.to_account_info(), cpi_accounts);
         transfer(cpi_ctx, lamports)?;
 
+
+
+            ctx.accounts.character.supply = ctx.accounts.character.supply.checked_add(amount).unwrap();
+
+
+
+        //mint character stocks to buyer ata
+        let cpi_accounts=MintTo{
+            mint:ctx.accounts.stock_mint.to_account_info(),
+            to:ctx.accounts.buyer_ata.to_account_info(),
+            authority:ctx.accounts.character.to_account_info(),
+        };
+
+        let seeds= &[b"character",fandom_id.as_ref(),char_slug.as_ref(),&[ctx.bumps.character]];
+
+        let signer= &[&seeds[..]];
+
+        let cpi_ctx= CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                cpi_accounts,
+                signer,
+        );
+        mint_to(cpi_ctx, amount as u64)?;
+        // stock price update
         let ps = &mut ctx.accounts.character_price_state;
 
         let treasury_balance = **ctx.accounts.character_treasury.to_account_info().lamports.borrow();
-        let base_price_fp = (treasury_balance as u128 * 1_000_000) / (character.supply as u128);
+        let base_price_fp = (treasury_balance as u128 * 1_000_000) / (ctx.accounts.character.supply as u128);
         ps.last_price_fp = base_price_fp;
         
         ps.week_start_ts = Clock::get()?.unix_timestamp;
@@ -163,7 +189,7 @@ pub struct CharacterCreated {
 
 #[event]
 pub struct FandomCreated{
-    pub admin:Pubkey
+    pub admin:Pubkey,
     pub fandom_id:[u8;32],
     pub name:String,
     pub ts:i64
@@ -181,6 +207,12 @@ pub struct GlobalConfigCreated {
     pub platform_wallet: Pubkey,
     pub global_treasury: Pubkey,
     pub ts: i64,
+}
+#[event]
+pub struct PriceUpdate {
+    character: String,
+    price_fp: u128,
+    ts: i64,
 }
 
 // # ------------------ ACCOUNTS ------------------
@@ -319,8 +351,6 @@ pub struct CreateCharacter<'info> {
     pub character: Account<'info, Character>,
 
 
-
-    // ✅ Treasury PDA for this character (SOL holder for now)
     #[account(
         init,
         payer = admin,
@@ -339,9 +369,22 @@ pub struct CreateCharacter<'info> {
     )]
     pub character_price_state: Account<'info,PriceState>,
     
+
+    #[account(init,
+    payer=admin,
+    mint::decimals=6,
+    mint::authority=character,
+    mint::freeze_authority=character,
+    seeds= [b"stock_mint",fandom_id.as_ref(),char_slug.as_ref()],
+    bump
+    )]
+
+    pub stock_mint:Account<'info,Mint>,
+
     #[account(mut)]
     pub admin: Signer<'info>,
 
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
@@ -379,6 +422,26 @@ pub struct BuyStock<'info> {
     )]
     pub character_price_state: Account<'info, PriceState>,
 
+    #[account(
+        mut,seeds=[b"stock_mint",
+        fandom_id.as_ref(),char_slug.as_ref()],
+        bump
+     )]
+    pub stock_mint:Account<'info,Mint>,
+     
+
+    #[account(
+        init,
+        payer = buyer,
+        associated_token::mint = stock_mint,
+        associated_token::authority = buyer
+    )]
+    pub buyer_ata: Account<'info, TokenAccount>,
+
+
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub rent: Sysvar<'info, Rent>,
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
