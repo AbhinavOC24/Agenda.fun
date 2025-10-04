@@ -1,0 +1,44 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::associated_token::AssociatedToken;
+use crate::state::*;
+
+pub fn init_global(
+    ctx: Context<InitGlobal>,
+    fee_bps: u16,
+    r_burn: u16,
+    r_global: u16,
+    r_char: u16,
+    k: i32,
+    usdc_mint: Pubkey,
+    platform_wallet: Pubkey, 
+) -> Result<()> {
+    let cfg = &mut ctx.accounts.global_config;
+    cfg.admin = ctx.accounts.admin.key();
+    cfg.fee_bps = fee_bps;
+    cfg.r_burn = r_burn;
+    cfg.r_global = r_global;
+    cfg.r_char = r_char;
+    cfg.k = k;
+
+    cfg.usdc_mint = usdc_mint;
+    cfg.flags = 0;
+    cfg.platform_wallet = platform_wallet;
+    cfg.global_treasury = ctx.accounts.global_treasury.key(); 
+
+
+        emit!(GlobalConfigCreated {
+            admin: cfg.admin,
+            fee_bps,
+            r_burn,
+            r_global,
+            r_char,
+            k,
+            usdc_mint,
+            platform_wallet,
+            global_treasury: cfg.global_treasury,
+            ts: Clock::get()?.unix_timestamp,
+        });
+
+    Ok(())
+}
