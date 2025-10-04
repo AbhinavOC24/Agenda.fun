@@ -1,5 +1,9 @@
+use anchor_lang::prelude::*;
+use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::associated_token::AssociatedToken;
+use crate::state::*;
 
-// # ------------------ CONTEXTS ------------------
+// ========== Init Global ==========
 
 #[derive(Accounts)]
 pub struct InitGlobal<'info> {
@@ -12,21 +16,22 @@ pub struct InitGlobal<'info> {
     )]
     pub global_config: Account<'info, GlobalConfig>,
 
-
     #[account(
         init,
         payer = admin,
-        space = 8, 
+        space = 8,
         seeds = [b"global_treasury"],
         bump
     )]
-    pub global_treasury: Account<'info,GlobalTreasury>,
+    pub global_treasury: Account<'info, GlobalTreasury>,
 
     #[account(mut)]
     pub admin: Signer<'info>,
 
     pub system_program: Program<'info, System>,
 }
+
+// ========== Create Fandom ==========
 
 #[derive(Accounts)]
 #[instruction(fandom_id: [u8; 32])]
@@ -41,9 +46,9 @@ pub struct CreateFandom<'info> {
     pub fandom: Account<'info, Fandom>,
 
     #[account(
-    seeds=[b"global_config"],
-    bump,
-    has_one=admin
+        seeds = [b"global_config"],
+        bump,
+        has_one = admin
     )]
     pub global_config: Account<'info, GlobalConfig>,
 
@@ -53,14 +58,16 @@ pub struct CreateFandom<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// ========== Create Character ==========
+
 #[derive(Accounts)]
-#[instruction(char_slug: String,fandom_id:[u8;32])]
+#[instruction(char_slug: String, fandom_id: [u8; 32])]
 pub struct CreateCharacter<'info> {
     #[account(
         mut,
         seeds = [b"fandom", fandom_id.as_ref()],
         bump,
-        has_one=admin
+        has_one = admin
     )]
     pub fandom: Account<'info, Fandom>,
 
@@ -73,7 +80,6 @@ pub struct CreateCharacter<'info> {
     )]
     pub character: Account<'info, Character>,
 
-
     #[account(
         init,
         payer = admin,
@@ -81,7 +87,7 @@ pub struct CreateCharacter<'info> {
         seeds = [b"char_treasury", fandom_id.as_ref(), char_slug.as_ref()],
         bump
     )]
-    pub character_treasury: Account<'info,CharacterTreasury>,
+    pub character_treasury: Account<'info, CharacterTreasury>,
 
     #[account(
         init,
@@ -90,18 +96,18 @@ pub struct CreateCharacter<'info> {
         seeds = [b"char_price_state", fandom_id.as_ref(), char_slug.as_ref()],
         bump
     )]
-    pub character_price_state: Account<'info,PriceState>,
-    
+    pub character_price_state: Account<'info, PriceState>,
 
-    #[account(init,
-    payer=admin,
-    mint::decimals=6,
-    mint::authority=character,
-    mint::freeze_authority=character,
-    seeds= [b"stock_mint",fandom_id.as_ref(),char_slug.as_ref()],
-    bump
+    #[account(
+        init,
+        payer = admin,
+        mint::decimals = 6,
+        mint::authority = character,
+        mint::freeze_authority = character,
+        seeds = [b"stock_mint", fandom_id.as_ref(), char_slug.as_ref()],
+        bump
     )]
-    pub stock_mint:Account<'info,Mint>,
+    pub stock_mint: Account<'info, Mint>,
 
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -109,6 +115,8 @@ pub struct CreateCharacter<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
+
+// ========== Buy Stock ==========
 
 #[derive(Accounts)]
 #[instruction(fandom_id: [u8; 32], char_slug: String)]
@@ -145,21 +153,19 @@ pub struct BuyStock<'info> {
     pub character_price_state: Account<'info, PriceState>,
 
     #[account(
-        mut,seeds=[b"stock_mint",
-        fandom_id.as_ref(),char_slug.as_ref()],
+        mut,
+        seeds = [b"stock_mint", fandom_id.as_ref(), char_slug.as_ref()],
         bump
-     )]
-    pub stock_mint:Account<'info,Mint>,
-     
+    )]
+    pub stock_mint: Account<'info, Mint>,
 
     #[account(
-        init,
+        init_if_needed,
         payer = buyer,
         associated_token::mint = stock_mint,
         associated_token::authority = buyer
     )]
     pub buyer_ata: Account<'info, TokenAccount>,
-
 
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub rent: Sysvar<'info, Rent>,
@@ -167,6 +173,7 @@ pub struct BuyStock<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// ========== Sell Stock ==========
 
 #[derive(Accounts)]
 #[instruction(fandom_id: [u8; 32], char_slug: String)]
@@ -212,6 +219,3 @@ pub struct SellStock<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
-
-
-

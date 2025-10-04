@@ -1,13 +1,10 @@
-
-
-
-#[account]
-pub struct GlobalTreasury{
-}
+use anchor_lang::prelude::*;
 
 #[account]
-pub struct CharacterTreasury{
-}
+pub struct GlobalTreasury {}
+
+#[account]
+pub struct CharacterTreasury {}
 
 #[account]
 #[derive(InitSpace)]
@@ -18,13 +15,10 @@ pub struct GlobalConfig {
     pub r_global: u16,
     pub r_char: u16,
     pub k: i32,
-
     pub usdc_mint: Pubkey,
     pub flags: u64,
-
-    // ✅ new fields
-    pub platform_wallet: Pubkey,   // where platform fee is sent
-    pub global_treasury: Pubkey,   // PDA that accumulates global share
+    pub platform_wallet: Pubkey,
+    pub global_treasury: Pubkey,
 }
 
 #[account]
@@ -42,7 +36,7 @@ pub struct Character {
     pub fandom: Pubkey,
     #[max_len(50)]
     pub char_slug: String,
-    pub treasury_vault: Pubkey, // PDA created per character
+    pub treasury_vault: Pubkey,
     pub stock_mint: Pubkey,
     pub supply: u64,
     pub price_state: Pubkey,
@@ -57,5 +51,3 @@ pub struct PriceState {
     pub last_price_fp: u128,
     pub week_start_ts: i64,
 }
-
-
