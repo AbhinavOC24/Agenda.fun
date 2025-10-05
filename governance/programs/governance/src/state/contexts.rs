@@ -219,3 +219,81 @@ pub struct SellStock<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
+
+
+// ========== Create Poll ==========
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
+pub struct CreatePoll<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    #[account(
+        seeds = [b"global_config"],
+        bump,
+        has_one = admin
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"fandom", fandom_id.as_ref()],
+        bump
+    )]
+    pub fandom: Account<'info, Fandom>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Poll::INIT_SPACE,
+        seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
+        bump
+    )]
+    pub poll: Account<'info, Poll>,
+
+    #[account(
+        init,
+        payer = admin,
+        space = 8,
+        seeds = [b"poll_escrow", poll_id.as_ref()],
+        bump
+    )]
+    pub poll_escrow: Account<'info, PollEscrow>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8; 32])]
+pub struct Vote<'info> {
+    #[account(mut)]
+    pub voter: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"poll", poll_id.as_ref()],
+        bump
+    )]
+    pub poll: Account<'info, Poll>,
+
+    #[account(
+        mut,
+        seeds = [b"poll_escrow", poll_id.as_ref()],
+        bump
+    )]
+    pub poll_escrow: Account<'info, PollEscrow>,
+
+    #[account(
+        init,
+        payer = voter,
+        space = 8 + VoteReceipt::INIT_SPACE,
+        seeds = [b"vote", poll_id.as_ref(), voter.key().as_ref()],
+        bump
+    )]
+    pub vote_receipt: Account<'info, VoteReceipt>,
+
+    pub system_program: Program<'info, System>,
+}

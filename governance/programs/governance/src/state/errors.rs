@@ -16,4 +16,6 @@ pub enum CustomError {
     InsufficientBalance,
     #[msg("Invalid state")]
     InvalidState,
+    #[msg("Poll is closed")]
+    PollClosed,
 }

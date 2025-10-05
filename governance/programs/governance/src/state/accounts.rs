@@ -51,3 +51,84 @@ pub struct PriceState {
     pub last_price_fp: u128,
     pub week_start_ts: i64,
 }
+
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
+pub struct PollSubject {
+    pub character: Pubkey,     
+    pub direction_if_yes: i8,  
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
+pub enum PollStatus {
+    Open,
+    Closed,
+    Resolved,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
+pub enum PollOutcome {
+    Unset,
+    Yes,
+    No,
+    Refunded
+}
+
+
+#[account]
+#[derive(InitSpace)]
+pub struct Poll {
+    pub poll_id: [u8; 32],
+    pub fandom: Pubkey,
+
+    // Multi-character subjects
+    #[max_len(4)]
+    pub subjects: Vec<PollSubject>,  
+
+    pub start_ts: i64,
+    pub end_ts: i64,
+
+    // parameters
+    pub lambda_fp: i32,          // conviction weight factor (1e6 fixed point)
+    pub k_override: Option<i32>, // optional per-poll sensitivity override
+
+    // Tallies (start at 0)
+    pub total_stake: u64,
+    pub stake_yes: u64,
+    pub stake_no: u64,
+
+    pub w_yes: u64,
+    pub w_no: u64,
+
+    pub status: PollStatus,
+    pub outcome: PollOutcome,
+
+    // settlement placeholders (filled at resolve)
+    pub platform_fee: u64,
+    pub econ_cut: u64,
+    pub payout_pool: u64,
+
+    // escrow vault that holds all staked lamports
+    pub escrow_vault: Pubkey,
+}
+
+#[account]
+pub struct PollEscrow {}
+
+#[account]
+#[derive(InitSpace)]
+pub struct VoteReceipt {
+    pub poll: Pubkey,          
+    pub voter: Pubkey,         
+    pub side: PollChoice,      
+    pub amount_staked: u64,    
+    pub weight_fp: u128,       
+    pub claimed: bool,         
+}
+
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
+pub enum PollChoice {
+    Yes,
+    No,
+}
