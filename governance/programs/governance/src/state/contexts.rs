@@ -297,3 +297,267 @@ pub struct Vote<'info> {
 
     pub system_program: Program<'info, System>,
 }
+
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8;32],fandom_id:[u8;32])]
+pub struct ResolvePoll<'info> {
+    pub anyone: Signer<'info>, 
+    #[account(
+        mut,
+        seeds = [b"poll", poll_id.as_ref(),fandom_id.as_ref()],
+        bump
+    )]
+    pub poll: Account<'info, Poll>,
+}
+
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
+pub struct ChallengePoll<'info> {
+    #[account(mut, seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()], bump)]
+    pub poll: Account<'info, Poll>,
+
+    #[account(mut)]
+    pub challenger: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"dispute_yes", poll_id.as_ref()],
+        bump
+    )]
+    pub dispute_yes: Account<'info, Proposal>,
+
+    #[account(
+        mut,
+        seeds = [b"dispute_no", poll_id.as_ref()],
+        bump
+    )]
+    pub dispute_no: Account<'info, Proposal>,
+
+    #[account(
+        init,
+        payer = challenger,
+        space = 8 + ProposalReceipt::INIT_SPACE,
+        seeds = [b"proposal_receipt", poll_id.as_ref(), challenger.key().as_ref()],
+        bump
+    )]
+    pub proposal_receipt: Account<'info, ProposalReceipt>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+#[derive(Accounts)]
+pub struct JoinDispute<'info> {
+    /// The poll in question, must already be in Disputed state
+    #[account(
+        mut,
+        has_one = fandom,
+        constraint = poll.status == PollStatus::Disputed @ CustomError::InvalidState
+    )]
+    pub poll: Account<'info, Poll>,
+
+    /// Fandom reference (read-only)
+    pub fandom: Account<'info, Fandom>,
+
+    /// Dispute vault for YES side — must match poll.dispute_yes
+    #[account(
+        mut,
+        seeds = [b"dispute_yes", poll.poll_id.as_ref()],
+        bump,
+        constraint = poll.dispute_yes.unwrap() == dispute_yes.key() @ CustomError::InvalidVault
+    )]
+    pub dispute_yes: Account<'info, Proposal>,
+
+    /// Dispute vault for NO side — must match poll.dispute_no
+    #[account(
+        mut,
+        seeds = [b"dispute_no", poll.poll_id.as_ref()],
+        bump,
+        constraint = poll.dispute_no.unwrap() == dispute_no.key() @ CustomError::InvalidVault
+    )]
+    pub dispute_no: Account<'info, Proposal>,
+
+    /// Receipt per participant (unique per staker)
+    #[account(
+        init,
+        payer = participant,
+        space = 8 + ProposalReceipt::INIT_SPACE,
+        seeds = [b"proposal_receipt", poll.poll_id.as_ref(), participant.key().as_ref()],
+        bump
+    )]
+    pub proposal_receipt: Account<'info, ProposalReceipt>,
+
+    /// The joining participant
+    #[account(mut)]
+    pub participant: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
+pub struct SettlePoll<'info> {
+    // --------------- Core Poll ---------------
+    #[account(
+        mut,
+        seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
+        bump
+    )]
+    pub poll: Account<'info, Poll>,
+
+    // --------------- Dispute Vaults ---------------
+    #[account(
+        mut,
+        seeds = [b"dispute_yes", poll_id.as_ref()],
+        bump
+    )]
+    pub dispute_yes: Account<'info, Proposal>,
+
+    #[account(
+        mut,
+        seeds = [b"dispute_no", poll_id.as_ref()],
+        bump
+    )]
+    pub dispute_no: Account<'info, Proposal>,
+
+    // --------------- Global Config + Treasuries ---------------
+    #[account(
+        mut,
+        seeds = [b"global_config"],
+        bump
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"global_treasury"],
+        bump
+    )]
+    pub global_treasury: Account<'info, GlobalTreasury>,
+
+    // --------------- Character + Treasury ---------------
+    /// The single-character poll subject (for now)
+    #[account(
+        mut,
+        seeds = [b"character", fandom_id.as_ref(), poll.subjects[0].char_slug.as_ref()],
+        bump
+    )]
+    pub character: Account<'info, Character>,
+
+    #[account(
+        mut,
+        seeds = [b"char_treasury", fandom_id.as_ref(), poll.subjects[0].char_slug.as_ref()],
+        bump
+    )]
+    pub character_treasury: Account<'info, CharacterTreasury>,
+
+    // --------------- Poll Escrow ---------------
+    /// CHECK: poll escrow PDA that holds all lamports for this poll
+    #[account(
+        mut,
+        seeds = [b"poll_escrow", poll.poll_id.as_ref()],
+        bump = poll.escrow_bump
+    )]
+    pub poll_escrow: AccountInfo<'info>,
+
+    // --------------- Platform Wallet ---------------
+    /// CHECK: must match platform wallet in config
+    #[account(
+        mut,
+        address = global_config.platform_wallet @ CustomError::Unauthorized
+    )]
+    pub platform_wallet: AccountInfo<'info>,
+
+    // --------------- Burn Sink ---------------
+    /// CHECK: you can pass a dummy dead address or SystemProgram::id()
+    #[account(mut)]
+    pub burn: AccountInfo<'info>,
+
+    // --------------- System Program ---------------
+    pub system_program: Program<'info, System>,
+}
+
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
+pub struct ClaimReward<'info> {
+    /// 🧾 The user claiming their reward
+    #[account(mut)]
+    pub voter: Signer<'info>,
+
+    /// 📊 Poll PDA — must be CLOSED
+    #[account(
+        mut,
+        seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
+        bump
+    )]
+    pub poll: Account<'info, Poll>,
+
+    /// 💰 Escrow vault PDA (holds all staked lamports)
+    #[account(
+        mut,
+        seeds = [b"poll_escrow", poll_id.as_ref()],
+        bump = poll.escrow_bump
+    )]
+    /// CHECK: this PDA only holds lamports
+    pub poll_escrow: AccountInfo<'info>,
+
+    /// 🧾 Vote receipt belonging to voter
+    #[account(
+        mut,
+        seeds = [b"vote", poll_id.as_ref(), voter.key().as_ref()],
+        bump,
+        constraint = vote_receipt.poll == poll.key() @ CustomError::InvalidReceipt,
+        constraint = vote_receipt.voter == voter.key() @ CustomError::InvalidReceipt
+    )]
+    pub vote_receipt: Account<'info, VoteReceipt>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+
+#[derive(Accounts)]
+#[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
+pub struct ClaimChallengeReward<'info> {
+    #[account(mut)]
+    pub staker: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
+        bump
+    )]
+    pub poll: Account<'info, Poll>,
+
+    #[account(
+        mut,
+        seeds = [b"dispute_yes", poll_id.as_ref()],
+        bump
+    )]
+    pub dispute_yes: Account<'info, Proposal>,
+
+    #[account(
+        mut,
+        seeds = [b"dispute_no", poll_id.as_ref()],
+        bump
+    )]
+    pub dispute_no: Account<'info, Proposal>,
+
+    #[account(
+        mut,
+        seeds = [b"proposal_receipt", poll_id.as_ref(), staker.key().as_ref()],
+        bump,
+        constraint = proposal_receipt.poll == poll.key() @ CustomError::InvalidReceipt
+    )]
+    pub proposal_receipt: Account<'info, ProposalReceipt>,
+
+    pub system_program: Program<'info, System>,
+}
+
+
+

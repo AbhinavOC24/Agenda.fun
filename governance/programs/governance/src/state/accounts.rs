@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-
+use crate::state::*;
 #[account]
 pub struct GlobalTreasury {}
 
@@ -55,24 +55,11 @@ pub struct PriceState {
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
 pub struct PollSubject {
-    pub character: Pubkey,     
+    #[max_len(50)]
+    pub char_slug: String,     
     pub direction_if_yes: i8,  
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
-pub enum PollStatus {
-    Open,
-    Closed,
-    Resolved,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
-pub enum PollOutcome {
-    Unset,
-    Yes,
-    No,
-    Refunded
-}
 
 
 #[account]
@@ -87,7 +74,7 @@ pub struct Poll {
 
     pub start_ts: i64,
     pub end_ts: i64,
-
+    pub challenge_end_ts:i64,
     // parameters
     pub lambda_fp: i32,          // conviction weight factor (1e6 fixed point)
     pub k_override: Option<i32>, // optional per-poll sensitivity override
@@ -97,23 +84,30 @@ pub struct Poll {
     pub stake_yes: u64,
     pub stake_no: u64,
 
+    pub payout_pool:u64,
     pub w_yes: u64,
     pub w_no: u64,
 
+    pub proposer_side:PollOutcome,
+    pub locked_dispute_amount:u64,
+
     pub status: PollStatus,
     pub outcome: PollOutcome,
+    pub dispute_pool:u64,
+    pub dispute_yes: Option<Pubkey>,
+    pub dispute_no: Option<Pubkey>,
 
-    // settlement placeholders (filled at resolve)
     pub platform_fee: u64,
-    pub econ_cut: u64,
-    pub payout_pool: u64,
-
+    pub econ_cut:u64,
     // escrow vault that holds all staked lamports
     pub escrow_vault: Pubkey,
+    pub escrow_bump:u8,
 }
 
-#[account]
-pub struct PollEscrow {}
+
+
+
+
 
 #[account]
 #[derive(InitSpace)]
@@ -127,8 +121,27 @@ pub struct VoteReceipt {
 }
 
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, PartialEq, Eq, InitSpace)]
-pub enum PollChoice {
-    Yes,
-    No,
+
+#[account]
+#[derive(InitSpace)]
+pub struct Proposal {
+    pub poll: Pubkey,
+    pub side: PollOutcome,        
+    pub total_stake: u64,         
+    pub tot_participants:u64,
 }
+
+#[account]
+#[derive(InitSpace)]
+pub struct ProposalReceipt {
+    pub poll: Pubkey,
+    pub side: PollOutcome,
+    pub staker: Pubkey,
+    pub amount_staked: u64,
+    pub claimed: bool,
+}
+
+
+
+#[account]
+pub struct PollEscrow {}
