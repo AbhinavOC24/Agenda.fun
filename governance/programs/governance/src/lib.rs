@@ -79,6 +79,53 @@ pub mod governance {
     ) -> Result<()> {
         instructions::poll::vote(ctx, poll_id, side, stake_lamports)
     }
+    pub fn resolve_poll_auto(
+        ctx: Context<ResolvePoll>,
+        poll_id: [u8; 32],
+    ) -> Result<()> {
+        instructions::poll::resolve_poll_auto(ctx, poll_id)
+    }
+
+    pub fn challenge_poll(
+        ctx: Context<ChallengePoll>,
+        poll_id: [u8; 32],
+        fandom_id: [u8; 32],
+        side: PollOutcome,
+        stake_lamports: u64,
+    ) -> Result<()> {
+        instructions::poll::challenge_poll(ctx, poll_id, fandom_id, side, stake_lamports)
+    }
+
+    pub fn join_dispute(
+        ctx: Context<JoinDispute>,
+        side: PollOutcome,
+        stake_lamports: u64,
+    ) -> Result<()> {
+        instructions::poll::join_dispute(ctx, side, stake_lamports)
+    }
+
+    pub fn settle_poll_with_dao(
+        ctx: Context<SettlePoll>,
+        poll_id: [u8; 32],
+        fandom_id: [u8; 32],
+        dao_decision: PollOutcome,
+    ) -> Result<()> {
+        instructions::poll::settle_poll_with_dao(ctx, poll_id, fandom_id, dao_decision)
+    }
+
+
+
+    pub fn claim_reward(
+        ctx: Context<ClaimReward>,
+    ) -> Result<()> {
+        instructions::poll::claim_reward(ctx)
+    }
+
+    pub fn claim_challenge_reward(
+        ctx: Context<ClaimChallengeReward>,
+    ) -> Result<()> {
+        instructions::poll::claim_challenge_reward(ctx)
+    }
 
    
 

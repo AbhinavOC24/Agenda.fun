@@ -390,6 +390,15 @@ pub fn settle_poll_with_dao(
     poll.econ_cut     = econ_cut as u64;
     poll.payout_pool= payout_pool as u64;
 
+
+    apply_character_nudge(
+        &mut ctx.accounts.character_price_state,
+        &ctx.accounts.character,
+        &ctx.accounts.character_treasury.to_account_info(),
+        &poll,
+        to_char as u64,
+    )?;
+    
     Ok(())
 }
 
@@ -503,4 +512,54 @@ pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>) -> Result<()> 
 
     receipt.claimed = true;
     Ok(())
+}
+
+pub fn apply_character_nudge<'info>(
+    price_state: &mut Account<'info, PriceState>,
+    character: &Account<'info, Character>,
+    treasury: &AccountInfo<'info>,
+    poll: &Poll,
+    to_character: u64, // lamports sent to this character in this poll
+) -> Result<()> {
+    // Read treasury lamports before and after inflow
+    let t_old = treasury.lamports();
+    let t_new = t_old.checked_add(to_character).unwrap();
+
+    // === Sentiment signal ===
+    let w_yes = poll.w_yes as i128;
+    let w_no = poll.w_no as i128;
+    let w_total = (w_yes + w_no).max(1);
+    let s_fp = ((w_yes - w_no) * 1_000_000) / w_total; // fixed-point (1e6)
+    // now s_fp is in 1e6 scale (e.g., 0.25 → 250_000)
+
+    // === stake factor ===
+    let total_stake = poll.total_stake as i128;
+    let alpha_fp = 200_000; // α = 0.2 in 1e6 fixed-point
+    let stake_ref = (alpha_fp * (t_old as i128)) / 1_000_000;
+    let sqrt_ratio = fixed_sqrt_fp((total_stake * 1_000_000) / stake_ref); // returns 1e6 fp
+    let f_fp = sqrt_ratio.min(1_000_000); // clamp to 1.0 max
+
+    // === multiplier ===
+    let k_fp = poll.k_override.unwrap_or(poll.lambda_fp) as i128; // already 1e6 scale
+    let m_fp = 1_000_000 + ((k_fp * s_fp * f_fp) / (1_000_000i128.pow(2))); // result 1e6 fp
+
+    // === price ===
+    let base_price_fp = ((t_new as i128) * 1_000_000) / (character.supply as i128);
+    let new_price_fp = (base_price_fp * m_fp) / 1_000_000;
+
+    price_state.last_price_fp = new_price_fp as u128;
+    price_state.week_start_ts = Clock::get()?.unix_timestamp;
+    Ok(())
+}
+
+// integer sqrt (for fixed-point math)
+fn fixed_sqrt_fp(x_fp: i128) -> i128 {
+    if x_fp <= 0 { return 0; }
+    let mut z = x_fp;
+    let mut res = x_fp;
+    while z * z > x_fp {
+        res = (z + x_fp / z) / 2;
+        z = res;
+    }
+    res
 }

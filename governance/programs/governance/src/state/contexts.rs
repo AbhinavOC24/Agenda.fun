@@ -3,7 +3,7 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 use anchor_spl::associated_token::AssociatedToken;
 use crate::state::*;
 
-// ========== Init Global ==========
+
 
 #[derive(Accounts)]
 pub struct InitGlobal<'info> {
@@ -31,7 +31,7 @@ pub struct InitGlobal<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// ========== Create Fandom ==========
+
 
 #[derive(Accounts)]
 #[instruction(fandom_id: [u8; 32])]
@@ -58,7 +58,7 @@ pub struct CreateFandom<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// ========== Create Character ==========
+
 
 #[derive(Accounts)]
 #[instruction(char_slug: String, fandom_id: [u8; 32])]
@@ -116,7 +116,7 @@ pub struct CreateCharacter<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// ========== Buy Stock ==========
+
 
 #[derive(Accounts)]
 #[instruction(fandom_id: [u8; 32], char_slug: String)]
@@ -173,7 +173,7 @@ pub struct BuyStock<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// ========== Sell Stock ==========
+
 
 #[derive(Accounts)]
 #[instruction(fandom_id: [u8; 32], char_slug: String)]
@@ -221,7 +221,7 @@ pub struct SellStock<'info> {
 }
 
 
-// ========== Create Poll ==========
+
 
 #[derive(Accounts)]
 #[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
@@ -350,7 +350,7 @@ pub struct ChallengePoll<'info> {
 
 #[derive(Accounts)]
 pub struct JoinDispute<'info> {
-    /// The poll in question, must already be in Disputed state
+
     #[account(
         mut,
         has_one = fandom,
@@ -358,10 +358,10 @@ pub struct JoinDispute<'info> {
     )]
     pub poll: Account<'info, Poll>,
 
-    /// Fandom reference (read-only)
+
     pub fandom: Account<'info, Fandom>,
 
-    /// Dispute vault for YES side — must match poll.dispute_yes
+
     #[account(
         mut,
         seeds = [b"dispute_yes", poll.poll_id.as_ref()],
@@ -370,7 +370,7 @@ pub struct JoinDispute<'info> {
     )]
     pub dispute_yes: Account<'info, Proposal>,
 
-    /// Dispute vault for NO side — must match poll.dispute_no
+
     #[account(
         mut,
         seeds = [b"dispute_no", poll.poll_id.as_ref()],
@@ -379,7 +379,7 @@ pub struct JoinDispute<'info> {
     )]
     pub dispute_no: Account<'info, Proposal>,
 
-    /// Receipt per participant (unique per staker)
+
     #[account(
         init,
         payer = participant,
@@ -389,7 +389,7 @@ pub struct JoinDispute<'info> {
     )]
     pub proposal_receipt: Account<'info, ProposalReceipt>,
 
-    /// The joining participant
+
     #[account(mut)]
     pub participant: Signer<'info>,
 
@@ -401,7 +401,7 @@ pub struct JoinDispute<'info> {
 #[derive(Accounts)]
 #[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
 pub struct SettlePoll<'info> {
-    // --------------- Core Poll ---------------
+
     #[account(
         mut,
         seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
@@ -409,7 +409,7 @@ pub struct SettlePoll<'info> {
     )]
     pub poll: Account<'info, Poll>,
 
-    // --------------- Dispute Vaults ---------------
+
     #[account(
         mut,
         seeds = [b"dispute_yes", poll_id.as_ref()],
@@ -424,7 +424,7 @@ pub struct SettlePoll<'info> {
     )]
     pub dispute_no: Account<'info, Proposal>,
 
-    // --------------- Global Config + Treasuries ---------------
+
     #[account(
         mut,
         seeds = [b"global_config"],
@@ -439,8 +439,8 @@ pub struct SettlePoll<'info> {
     )]
     pub global_treasury: Account<'info, GlobalTreasury>,
 
-    // --------------- Character + Treasury ---------------
-    /// The single-character poll subject (for now)
+
+
     #[account(
         mut,
         seeds = [b"character", fandom_id.as_ref(), poll.subjects[0].char_slug.as_ref()],
@@ -455,29 +455,41 @@ pub struct SettlePoll<'info> {
     )]
     pub character_treasury: Account<'info, CharacterTreasury>,
 
-    // --------------- Poll Escrow ---------------
-    /// CHECK: poll escrow PDA that holds all lamports for this poll
+    #[account(
+        mut,
+        seeds = [b"char_price_state", fandom_id.as_ref(), poll.subjects[0].char_slug.as_ref()],
+        bump
+    )]
+    pub character_price_state: Account<'info, PriceState>,
+    
+
+
     #[account(
         mut,
         seeds = [b"poll_escrow", poll.poll_id.as_ref()],
         bump = poll.escrow_bump
     )]
-    pub poll_escrow: AccountInfo<'info>,
+    pub poll_escrow: Account<'info,PollEscrow>,
 
-    // --------------- Platform Wallet ---------------
-    /// CHECK: must match platform wallet in config
+
+    /// CHECK:
+    /// This is the platform wallet specified in GlobalConfig.
+    /// Its address is validated via the `address = global_config.platform_wallet` constraint.
+    /// No other runtime checks are necessary.
     #[account(
         mut,
         address = global_config.platform_wallet @ CustomError::Unauthorized
     )]
     pub platform_wallet: AccountInfo<'info>,
 
-    // --------------- Burn Sink ---------------
-    /// CHECK: you can pass a dummy dead address or SystemProgram::id()
+
+        /// CHECK:
+    /// This is a burn sink account (e.g., SystemProgram::id() or a known dead address).
+    /// It only receives lamports; no data is read or written.
     #[account(mut)]
     pub burn: AccountInfo<'info>,
 
-    // --------------- System Program ---------------
+
     pub system_program: Program<'info, System>,
 }
 
@@ -485,11 +497,11 @@ pub struct SettlePoll<'info> {
 #[derive(Accounts)]
 #[instruction(poll_id: [u8; 32], fandom_id: [u8; 32])]
 pub struct ClaimReward<'info> {
-    /// 🧾 The user claiming their reward
+
     #[account(mut)]
     pub voter: Signer<'info>,
 
-    /// 📊 Poll PDA — must be CLOSED
+
     #[account(
         mut,
         seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
@@ -497,16 +509,16 @@ pub struct ClaimReward<'info> {
     )]
     pub poll: Account<'info, Poll>,
 
-    /// 💰 Escrow vault PDA (holds all staked lamports)
+
     #[account(
         mut,
         seeds = [b"poll_escrow", poll_id.as_ref()],
         bump = poll.escrow_bump
     )]
-    /// CHECK: this PDA only holds lamports
-    pub poll_escrow: AccountInfo<'info>,
 
-    /// 🧾 Vote receipt belonging to voter
+    pub poll_escrow: Account<'info,PollEscrow>,
+
+
     #[account(
         mut,
         seeds = [b"vote", poll_id.as_ref(), voter.key().as_ref()],
