@@ -113,6 +113,14 @@ pub mod governance {
         instructions::poll::settle_poll_with_dao(ctx, poll_id, fandom_id, dao_decision)
     }
 
+    pub fn settle_poll_auto(
+        ctx: Context<SettlePoll>,
+        poll_id: [u8; 32],
+        fandom_id: [u8; 32],        
+    ) -> Result<()> {
+        instructions::poll::settle_poll_auto(ctx, poll_id, fandom_id)
+    }
+
 
 
     pub fn claim_reward(

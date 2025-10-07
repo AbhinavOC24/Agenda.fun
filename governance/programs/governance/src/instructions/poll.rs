@@ -391,16 +391,117 @@ pub fn settle_poll_with_dao(
     poll.payout_pool= payout_pool as u64;
 
 
+    let subject = poll.subjects.first().ok_or(CustomError::InvalidState)?; // single character for now
+
     apply_character_nudge(
         &mut ctx.accounts.character_price_state,
         &ctx.accounts.character,
         &ctx.accounts.character_treasury.to_account_info(),
         &poll,
         to_char as u64,
+        subject.direction_if_yes, // 👈 use that field here
     )?;
-    
     Ok(())
 }
+
+
+
+pub fn settle_poll_auto(
+    ctx: Context<SettlePoll>,
+    poll_id: [u8; 32],
+    fandom_id: [u8; 32],
+) -> Result<()> {
+    let poll = &mut ctx.accounts.poll;
+
+
+    require!(poll.status != PollStatus::Disputed, CustomError::InvalidState);
+    
+    require!(
+        Clock::get()?.unix_timestamp > poll.challenge_end_ts,
+        CustomError::ChallengeWindowStillOpen
+    );
+
+
+    poll.outcome = poll.proposer_side.clone();
+    require!(poll.outcome != PollOutcome::Unset, CustomError::InvalidState);
+    poll.status = PollStatus::Closed;
+
+
+    let global_config = &ctx.accounts.global_config;
+    let total_stake = poll.total_stake as u128;
+
+    let platform_fee: u128 =
+        total_stake.checked_mul(global_config.fee_bps as u128).unwrap() / 10_000u128;
+
+    let after_fee = total_stake.checked_sub(platform_fee).unwrap();
+
+    let lambda_fp: u128 = poll.lambda_fp as u128;
+    let econ_cut = after_fee.checked_mul(lambda_fp).unwrap() / 1_000_000u128;
+
+    let to_char = econ_cut.checked_mul(global_config.r_char as u128).unwrap() / 10_000u128;
+    let to_global = econ_cut.checked_mul(global_config.r_global as u128).unwrap() / 10_000u128;
+    let to_burn = econ_cut.checked_mul(global_config.r_burn as u128).unwrap() / 10_000u128;
+
+    let payout_pool = after_fee.checked_sub(econ_cut).unwrap();
+
+    poll.platform_fee = platform_fee as u64;
+    poll.econ_cut = econ_cut as u64;
+    poll.payout_pool = payout_pool as u64;
+
+
+    let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
+
+    // Platform fee
+    transfer_lamports(
+        ctx.accounts.poll_escrow.to_account_info(),
+        ctx.accounts.platform_wallet.to_account_info(),
+        platform_fee as u64,
+        ctx.accounts.system_program.to_account_info(),
+        Some(seeds),
+    )?;
+
+    // Character treasury
+    transfer_lamports(
+        ctx.accounts.poll_escrow.to_account_info(),
+        ctx.accounts.character_treasury.to_account_info(),
+        to_char as u64,
+        ctx.accounts.system_program.to_account_info(),
+        Some(seeds),
+    )?;
+
+    // Global treasury
+    transfer_lamports(
+        ctx.accounts.poll_escrow.to_account_info(),
+        ctx.accounts.global_treasury.to_account_info(),
+        to_global as u64,
+        ctx.accounts.system_program.to_account_info(),
+        Some(seeds),
+    )?;
+
+    // Burn
+    transfer_lamports(
+        ctx.accounts.poll_escrow.to_account_info(),
+        ctx.accounts.burn.to_account_info(),
+        to_burn as u64,
+        ctx.accounts.system_program.to_account_info(),
+        Some(seeds),
+    )?;
+
+
+    let subject = poll.subjects.first().ok_or(CustomError::InvalidState)?;
+    apply_character_nudge(
+        &mut ctx.accounts.character_price_state,
+        &ctx.accounts.character,
+        &ctx.accounts.character_treasury.to_account_info(),
+        &poll,
+        to_char as u64,
+        subject.direction_if_yes,
+    )?;
+
+    Ok(())
+}
+
+
 
 
 pub fn claim_reward(ctx: Context<ClaimReward>) -> Result<()> {
@@ -410,7 +511,7 @@ pub fn claim_reward(ctx: Context<ClaimReward>) -> Result<()> {
     require!(poll.status == PollStatus::Closed, CustomError::InvalidState);
     require!(!receipt.claimed, CustomError::AlreadyClaimed);
 
-    // ✅ Winner check
+
     let is_winner = match (poll.outcome.clone(), receipt.side.clone()) {
         (PollOutcome::Yes, PollChoice::Yes) => true,
         (PollOutcome::No, PollChoice::No) => true,
@@ -519,9 +620,9 @@ pub fn apply_character_nudge<'info>(
     character: &Account<'info, Character>,
     treasury: &AccountInfo<'info>,
     poll: &Poll,
-    to_character: u64, // lamports sent to this character in this poll
+    to_character: u64,
+    direction_if_yes: i8, // directly passed from PollSubject
 ) -> Result<()> {
-    // Read treasury lamports before and after inflow
     let t_old = treasury.lamports();
     let t_new = t_old.checked_add(to_character).unwrap();
 
@@ -529,28 +630,37 @@ pub fn apply_character_nudge<'info>(
     let w_yes = poll.w_yes as i128;
     let w_no = poll.w_no as i128;
     let w_total = (w_yes + w_no).max(1);
-    let s_fp = ((w_yes - w_no) * 1_000_000) / w_total; // fixed-point (1e6)
-    // now s_fp is in 1e6 scale (e.g., 0.25 → 250_000)
+
+    // if poll.outcome == Yes → use direction_if_yes
+    // if poll.outcome == No → invert it
+    let dir_effect = match poll.outcome {
+        PollOutcome::Yes => direction_if_yes as i128,
+        PollOutcome::No => -(direction_if_yes as i128),
+        _ => 0,
+    };
+
+    let s_fp = ((w_yes - w_no) * dir_effect * 1_000_000) / w_total;
 
     // === stake factor ===
     let total_stake = poll.total_stake as i128;
-    let alpha_fp = 200_000; // α = 0.2 in 1e6 fixed-point
+    let alpha_fp = 200_000; // 0.2
     let stake_ref = (alpha_fp * (t_old as i128)) / 1_000_000;
-    let sqrt_ratio = fixed_sqrt_fp((total_stake * 1_000_000) / stake_ref); // returns 1e6 fp
-    let f_fp = sqrt_ratio.min(1_000_000); // clamp to 1.0 max
+    let sqrt_ratio = fixed_sqrt_fp((total_stake * 1_000_000) / stake_ref);
+    let f_fp = sqrt_ratio.min(1_000_000);
 
     // === multiplier ===
-    let k_fp = poll.k_override.unwrap_or(poll.lambda_fp) as i128; // already 1e6 scale
-    let m_fp = 1_000_000 + ((k_fp * s_fp * f_fp) / (1_000_000i128.pow(2))); // result 1e6 fp
+    let k_fp = poll.k_override.unwrap_or(poll.lambda_fp) as i128;
+    let m_fp = 1_000_000 + ((k_fp * s_fp * f_fp) / (1_000_000i128.pow(2)));
 
     // === price ===
     let base_price_fp = ((t_new as i128) * 1_000_000) / (character.supply as i128);
     let new_price_fp = (base_price_fp * m_fp) / 1_000_000;
 
-    price_state.last_price_fp = new_price_fp as u128;
+    price_state.last_price_fp = new_price_fp.max(0) as u128;
     price_state.week_start_ts = Clock::get()?.unix_timestamp;
     Ok(())
 }
+
 
 // integer sqrt (for fixed-point math)
 fn fixed_sqrt_fp(x_fp: i128) -> i128 {
