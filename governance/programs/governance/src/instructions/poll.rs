@@ -117,7 +117,7 @@ pub fn challenge_poll(
     ctx: Context<ChallengePoll>,
     poll_id: [u8; 32],
     fandom_id: [u8; 32],
-    side: PollOutcome,          // challenger’s side (opposite of proposer)
+    side: PollOutcome,          
     stake_lamports: u64,
 ) -> Result<()> {
     let poll = &mut ctx.accounts.poll;
@@ -180,64 +180,6 @@ pub fn challenge_poll(
 
 
 
-// pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32]) -> Result<()> {
-//     let poll = &mut ctx.accounts.poll;
-//     let now = Clock::get()?.unix_timestamp;
-//     require!(
-//         poll.status == PollStatus::ChallengeWindow || poll.status == PollStatus::Disputed,
-//         CustomError::InvalidState
-//     );
-//     require!(now > poll.challenge_end_ts, CustomError::ChallengeWindowStillOpen);
-
-//     // Determine final outcome
-//     let final_outcome = if poll.status == PollStatus::Disputed {
-//         let yes_stake = ctx.accounts.proposal_yes.total_stake;
-//         let no_stake = ctx.accounts.proposal_no.total_stake;
-
-//         if yes_stake >= no_stake {
-//             PollOutcome::Yes
-//         } else {
-//             PollOutcome::No
-//         }
-//     } else {
-//         poll.proposer_side.clone()
-//     };
-
-//     poll.outcome = final_outcome.clone();
-//     poll.status = PollStatus::Closed;
-
-//     // compute redistributions
-//     let total_stake = poll.total_stake;
-//     let platform_fee = (total_stake * 200) / 10_000; // 2%
-//     let econ_cut = (total_stake * 300) / 10_000; // 3%
-//     let payout_pool = total_stake - platform_fee - econ_cut;
-
-//     poll.platform_fee = platform_fee;
-//     poll.econ_cut = econ_cut;
-//     poll.payout_pool = payout_pool;
-
-//     poll.total_winner_stake = match final_outcome {
-//         PollOutcome::Yes => poll.stake_yes,
-//         PollOutcome::No => poll.stake_no,
-//         _ => 0,
-//     };
-//     poll.total_loser_stake = total_stake - poll.total_winner_stake;
-
-
-//     // --- Character nudges ---
-//     for subj in poll.subjects.iter() {
-//         let direction = match final_outcome {
-//             PollOutcome::Yes => subj.direction_if_yes,
-//             PollOutcome::No => -subj.direction_if_yes,
-//             _ => 0,
-//         };
-//         apply_character_nudge(&subj.character, direction)?;
-//     }
-
-//     Ok(())
-// }
-
-
 pub fn join_dispute(
     ctx: Context<JoinDispute>,
     side: PollOutcome,
@@ -287,152 +229,41 @@ pub fn join_dispute(
 }
 
 
-
-
-
-pub fn settle_poll_with_dao(
-    ctx: Context<SettlePoll>,
-    poll_id: [u8; 32],
-    fandom_id:[u8;32],
-    dao_decision: PollOutcome, 
-) -> Result<()> {
-    let poll = &mut ctx.accounts.poll;
-    require!(poll.status == PollStatus::Disputed, CustomError::NotDisputed);
-    require!(Clock::get()?.unix_timestamp > poll.challenge_end_ts, CustomError::ChallengeWindowStillOpen);
-
-    // final outcome comes from DAO
-    poll.outcome = dao_decision.clone();
-    poll.status = PollStatus::Closed;
-
-    let winners_total = match dao_decision {
-        PollOutcome::Yes => ctx.accounts.dispute_yes.total_stake,
-        PollOutcome::No => ctx.accounts.dispute_no.total_stake,
-        _ => 0,
-    };
-    let losers_total = match dao_decision {
-        PollOutcome::Yes => ctx.accounts.dispute_no.total_stake,
-        PollOutcome::No => ctx.accounts.dispute_yes.total_stake,
-        _ => 0,
-    };
-
-
-
-    // redistribute losers' stake pro-rata to winners
-    poll.dispute_pool = (winners_total as u128 + losers_total as u128) as u64;
-
-
-
-
-    let global_config=&mut ctx.accounts.global_config;
-
-    let total_stake = poll.total_stake as u128;
-
-    
-    let platform_fee: u128 =
-        total_stake.checked_mul(global_config.fee_bps as u128).unwrap() / 10_000u128;
-
-
-    let after_fee = total_stake.checked_sub(platform_fee).unwrap();
-
-    let lambda_fp: u128 = poll.lambda_fp as u128;
-    let econ_cut = after_fee.checked_mul(lambda_fp).unwrap() / 1_000_000u128;
-
-    let to_char   = econ_cut.checked_mul(global_config.r_char as u128).unwrap() / 10_000u128;
-    let to_global = econ_cut.checked_mul(global_config.r_global as u128).unwrap() / 10_000u128;
-    let to_burn   = econ_cut.checked_mul(global_config.r_burn as u128).unwrap() / 10_000u128;
-
-
-    let payout_pool = after_fee.checked_sub(econ_cut).unwrap();
-
-
-    
-    // ---- TRANSFERS ----
-
-    let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
-
-    // Platform fee → platform wallet
-    transfer_lamports(
-        ctx.accounts.poll_escrow.to_account_info(),
-        ctx.accounts.platform_wallet.to_account_info(),
-        platform_fee as u64,
-        ctx.accounts.system_program.to_account_info(),
-        Some(seeds),
-    )?;
-
-    // Character treasury
-    transfer_lamports(
-        ctx.accounts.poll_escrow.to_account_info(),
-        ctx.accounts.character_treasury.to_account_info(),
-        to_char as u64,
-        ctx.accounts.system_program.to_account_info(),
-        Some(seeds),
-    )?;
-
-    // Global treasury
-    transfer_lamports(
-        ctx.accounts.poll_escrow.to_account_info(),
-        ctx.accounts.global_treasury.to_account_info(),
-        to_global as u64,
-        ctx.accounts.system_program.to_account_info(),
-        Some(seeds),
-    )?;
-
-    // Burn address — use SystemProgram::id() (111111...) as sink
-    transfer_lamports(
-        ctx.accounts.poll_escrow.to_account_info(),
-        ctx.accounts.burn.to_account_info(),
-        to_burn as u64,
-        ctx.accounts.system_program.to_account_info(),
-        Some(seeds),
-    )?;
-
-    poll.platform_fee = platform_fee as u64;
-    poll.econ_cut     = econ_cut as u64;
-    poll.payout_pool= payout_pool as u64;
-
-
-    let subject = poll.subjects.first().ok_or(CustomError::InvalidState)?; // single character for now
-
-    apply_character_nudge(
-        &mut ctx.accounts.character_price_state,
-        &ctx.accounts.character,
-        &ctx.accounts.character_treasury.to_account_info(),
-        &poll,
-        to_char as u64,
-        subject.direction_if_yes, // 👈 use that field here
-    )?;
-    Ok(())
-}
-
-
-
-pub fn settle_poll_auto(
-    ctx: Context<SettlePoll>,
-    poll_id: [u8; 32],
-    fandom_id: [u8; 32],
-) -> Result<()> {
+pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
     let poll = &mut ctx.accounts.poll;
 
-
-    require!(poll.status != PollStatus::Disputed, CustomError::InvalidState);
-    
+    require!(
+        poll.status == PollStatus::ChallengeWindow || poll.status == PollStatus::Disputed,
+        CustomError::InvalidState
+    );
     require!(
         Clock::get()?.unix_timestamp > poll.challenge_end_ts,
         CustomError::ChallengeWindowStillOpen
     );
 
 
-    poll.outcome = poll.proposer_side.clone();
-    require!(poll.outcome != PollOutcome::Unset, CustomError::InvalidState);
+    let final_outcome = if poll.status == PollStatus::Disputed {
+
+        if ctx.accounts.dispute_yes.total_stake >= ctx.accounts.dispute_no.total_stake {
+            PollOutcome::Yes
+        } else {
+            PollOutcome::No
+        }
+    } else {
+
+        poll.proposer_side.clone()
+    };
+    poll.outcome = final_outcome;
     poll.status = PollStatus::Closed;
 
-
+    // === Economics ===
     let global_config = &ctx.accounts.global_config;
     let total_stake = poll.total_stake as u128;
 
-    let platform_fee: u128 =
-        total_stake.checked_mul(global_config.fee_bps as u128).unwrap() / 10_000u128;
-
+    let platform_fee = total_stake
+        .checked_mul(global_config.fee_bps as u128)
+        .unwrap()
+        / 10_000u128;
     let after_fee = total_stake.checked_sub(platform_fee).unwrap();
 
     let lambda_fp: u128 = poll.lambda_fp as u128;
@@ -448,10 +279,9 @@ pub fn settle_poll_auto(
     poll.econ_cut = econ_cut as u64;
     poll.payout_pool = payout_pool as u64;
 
-
+    // === Transfers ===
     let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
 
-    // Platform fee
     transfer_lamports(
         ctx.accounts.poll_escrow.to_account_info(),
         ctx.accounts.platform_wallet.to_account_info(),
@@ -459,8 +289,6 @@ pub fn settle_poll_auto(
         ctx.accounts.system_program.to_account_info(),
         Some(seeds),
     )?;
-
-    // Character treasury
     transfer_lamports(
         ctx.accounts.poll_escrow.to_account_info(),
         ctx.accounts.character_treasury.to_account_info(),
@@ -468,8 +296,6 @@ pub fn settle_poll_auto(
         ctx.accounts.system_program.to_account_info(),
         Some(seeds),
     )?;
-
-    // Global treasury
     transfer_lamports(
         ctx.accounts.poll_escrow.to_account_info(),
         ctx.accounts.global_treasury.to_account_info(),
@@ -477,8 +303,6 @@ pub fn settle_poll_auto(
         ctx.accounts.system_program.to_account_info(),
         Some(seeds),
     )?;
-
-    // Burn
     transfer_lamports(
         ctx.accounts.poll_escrow.to_account_info(),
         ctx.accounts.burn.to_account_info(),
@@ -487,7 +311,7 @@ pub fn settle_poll_auto(
         Some(seeds),
     )?;
 
-
+    // === Character nudge ===
     let subject = poll.subjects.first().ok_or(CustomError::InvalidState)?;
     apply_character_nudge(
         &mut ctx.accounts.character_price_state,
@@ -504,7 +328,12 @@ pub fn settle_poll_auto(
 
 
 
-pub fn claim_reward(ctx: Context<ClaimReward>) -> Result<()> {
+
+
+
+
+pub fn claim_reward(ctx: Context<ClaimReward>
+    , poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
     let poll = &ctx.accounts.poll;
     let receipt = &mut ctx.accounts.vote_receipt;
 
@@ -540,7 +369,7 @@ pub fn claim_reward(ctx: Context<ClaimReward>) -> Result<()> {
 
         let reward = reward_u128 as u64;
 
-        // transfer lamports from escrow → voter
+
         let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
         transfer_lamports(
             ctx.accounts.poll_escrow.to_account_info(),
@@ -557,7 +386,8 @@ pub fn claim_reward(ctx: Context<ClaimReward>) -> Result<()> {
 
 
 
-pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>) -> Result<()> {
+pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
+    , poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
     let poll = &ctx.accounts.poll;
     let receipt = &mut ctx.accounts.proposal_receipt;
 
