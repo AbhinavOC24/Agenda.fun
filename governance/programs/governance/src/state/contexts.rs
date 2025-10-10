@@ -93,6 +93,7 @@ pub struct CreateCharacter<'info> {
         init,
         payer = admin,
         space = 8 + PriceState::INIT_SPACE,
+        // space = 8 + 4 + 50 + 16 + 8,  // Increased space for string
         seeds = [b"char_price_state", fandom_id.as_ref(), char_slug.as_ref()],
         bump
     )]
