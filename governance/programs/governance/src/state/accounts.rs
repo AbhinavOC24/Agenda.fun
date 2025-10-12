@@ -71,6 +71,7 @@ pub struct Poll {
     // Multi-character subjects
     #[max_len(4)]
     pub subjects: Vec<PollSubject>,  
+    pub metadata_hash: [u8; 32],  
 
     pub start_ts: i64,
     pub end_ts: i64,

@@ -61,7 +61,7 @@ pub struct CreateFandom<'info> {
 
 
 #[derive(Accounts)]
-#[instruction(char_slug: String, fandom_id: [u8; 32])]
+#[instruction(fandom_id: [u8; 32],char_slug: String)]
 pub struct CreateCharacter<'info> {
     #[account(
         mut,
@@ -75,6 +75,7 @@ pub struct CreateCharacter<'info> {
         init,
         payer = admin,
         space = 8 + Character::INIT_SPACE,
+
         seeds = [b"character", fandom_id.as_ref(), char_slug.as_ref()],
         bump
     )]
@@ -93,7 +94,6 @@ pub struct CreateCharacter<'info> {
         init,
         payer = admin,
         space = 8 + PriceState::INIT_SPACE,
-        // space = 8 + 4 + 50 + 16 + 8,  // Increased space for string
         seeds = [b"char_price_state", fandom_id.as_ref(), char_slug.as_ref()],
         bump
     )]
@@ -177,7 +177,7 @@ pub struct BuyStock<'info> {
 
 
 #[derive(Accounts)]
-#[instruction(fandom_id: [u8; 32], char_slug: String)]
+#[instruction(shares_in:u64,fandom_id: [u8; 32], char_slug: String)]
 pub struct SellStock<'info> {
     #[account(mut)]
     pub seller: Signer<'info>,
@@ -268,14 +268,14 @@ pub struct CreatePoll<'info> {
 
 
 #[derive(Accounts)]
-#[instruction(poll_id: [u8; 32])]
+#[instruction(poll_id: [u8; 32],fandom_id:[u8;32])]
 pub struct Vote<'info> {
     #[account(mut)]
     pub voter: Signer<'info>,
 
     #[account(
         mut,
-        seeds = [b"poll", poll_id.as_ref()],
+        seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
         bump
     )]
     pub poll: Account<'info, Poll>,
@@ -306,7 +306,7 @@ pub struct ResolvePoll<'info> {
     pub anyone: Signer<'info>, 
     #[account(
         mut,
-        seeds = [b"poll", poll_id.as_ref(),fandom_id.as_ref()],
+        seeds = [b"poll", fandom_id.as_ref(), poll_id.as_ref()],
         bump
     )]
     pub poll: Account<'info, Poll>,
@@ -321,16 +321,20 @@ pub struct ChallengePoll<'info> {
 
     #[account(mut)]
     pub challenger: Signer<'info>,
-
+    
     #[account(
-        mut,
+        init_if_needed,
+        payer = challenger,
+        space = 8 + Proposal::INIT_SPACE,
         seeds = [b"dispute_yes", poll_id.as_ref()],
         bump
     )]
     pub dispute_yes: Account<'info, Proposal>,
-
+    
     #[account(
-        mut,
+        init_if_needed,
+        payer = challenger,
+        space = 8 + Proposal::INIT_SPACE,
         seeds = [b"dispute_no", poll_id.as_ref()],
         bump
     )]

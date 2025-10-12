@@ -25,41 +25,34 @@ pub fn try_transition(poll: &mut Account<Poll>) -> Result<()> {
 
 
 
+
 pub fn transfer_lamports<'info>(
     from: AccountInfo<'info>,
     to: AccountInfo<'info>,
     amount: u64,
-    system_program: AccountInfo<'info>,
+    _system_program: AccountInfo<'info>,
     signer_seeds: Option<&[&[u8]]>,
 ) -> Result<()> {
-    require!(amount > 0, CustomError::InvalidInput);
-
-    let ix = system_instruction::transfer(&from.key(), &to.key(), amount);
-
-
     if let Some(seeds) = signer_seeds {
-        invoke_signed(
-            &ix,
-            &[
-                from.clone(),
-                to.clone(),
-                system_program.clone(),
-            ],
-            &[seeds],
-        )?;
-    } else {
+        let from_key = from.key();
+        let to_key = to.key();
+        **from.try_borrow_mut_lamports()? -= amount;
+        **to.try_borrow_mut_lamports()? += amount;
 
+        
+        msg!("Transferred {} lamports from {:?} to {:?}", amount, from_key, to_key);
+        Ok(())
+    } else {
+        // Fallback for normal system-owned transfers (if needed)
+        let ix = system_instruction::transfer(&from.key(), &to.key(), amount);
         invoke(
             &ix,
             &[
                 from.clone(),
                 to.clone(),
-                system_program.clone(),
+                _system_program.clone(),
             ],
         )?;
+        Ok(())
     }
-
-    Ok(())
 }
-
-

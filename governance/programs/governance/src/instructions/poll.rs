@@ -10,6 +10,7 @@ pub fn create_poll(
     start_ts: i64,
     challenge_end_ts:i64,
     end_ts: i64,
+    metadata_hash:[u8;32],
     lambda_fp: i32,
     k_override: Option<i32>,
 ) -> Result<()> {
@@ -24,9 +25,9 @@ pub fn create_poll(
     poll.end_ts = end_ts;
     poll.lambda_fp = lambda_fp;
     poll.k_override = k_override;
-    poll.challenge_end_ts = poll.end_ts + 2 * 24 * 60 * 60; 
+    poll.challenge_end_ts = challenge_end_ts; 
+    poll.metadata_hash=metadata_hash;
 
-    // initialize counters
     poll.total_stake = 0;
     poll.stake_yes = 0;
     poll.stake_no = 0;
@@ -44,7 +45,7 @@ pub fn create_poll(
 }
 
 
-pub fn vote(ctx:Context<Vote>,poll_id:[u8;32],side:PollChoice,stake_lamports:u64)
+pub fn vote(ctx:Context<Vote>,poll_id:[u8;32],fandom_id:[u8;32],side:PollChoice,stake_lamports:u64)
 ->Result<()>
 {
 
@@ -53,6 +54,7 @@ pub fn vote(ctx:Context<Vote>,poll_id:[u8;32],side:PollChoice,stake_lamports:u64
     let voter= &ctx.accounts.voter;
     try_transition(poll)?;
     let now = Clock::get()?.unix_timestamp;
+    //TODO
     require!(now >= poll.start_ts && now <= poll.end_ts, CustomError::PollClosed);
     require!(poll.status== PollStatus::Open,CustomError::PollClosed);  
     require!(stake_lamports>0,CustomError::InvalidInput);
@@ -95,9 +97,10 @@ pub fn vote(ctx:Context<Vote>,poll_id:[u8;32],side:PollChoice,stake_lamports:u64
 }
 
 
-pub fn resolve_poll_auto(ctx: Context<ResolvePoll>, poll_id: [u8; 32]) -> Result<()> {
+pub fn resolve_poll_auto(ctx: Context<ResolvePoll>, poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
     let poll = &mut ctx.accounts.poll;
     require!(poll.status == PollStatus::Open, CustomError::InvalidState);
+    //Todo
     require!(Clock::get()?.unix_timestamp > poll.end_ts, CustomError::PollNotEnded);
 
     poll.proposer_side = if poll.w_yes >= poll.w_no {
@@ -107,7 +110,7 @@ pub fn resolve_poll_auto(ctx: Context<ResolvePoll>, poll_id: [u8; 32]) -> Result
     };
 
     poll.status = PollStatus::ChallengeWindow;
-    poll.challenge_end_ts = Clock::get()?.unix_timestamp + 24 * 60 * 60; // open 24h for challenges
+
 
     Ok(())
 }
@@ -125,18 +128,18 @@ pub fn challenge_poll(
     require!(Clock::get()?.unix_timestamp <= poll.challenge_end_ts, CustomError::ChallengeWindowClosed);
     require!(stake_lamports > 0, CustomError::InvalidInput);
 
-    // Challenger must pick opposite of proposer side
+
     require!(
         side != poll.proposer_side && poll.proposer_side != PollOutcome::Unset,
         CustomError::InvalidInput
     );
 
-    // lock entry amount for all future joiners
+
     poll.locked_dispute_amount = stake_lamports;
 
     let challenger = &ctx.accounts.challenger;
 
-    // transfer lamports to dispute_no/yes vault (depending on challenger’s side)
+
     let cpi_accounts = Transfer {
         from: challenger.to_account_info(),
         to: match side {
@@ -148,7 +151,7 @@ pub fn challenge_poll(
     let cpi_ctx = CpiContext::new(ctx.accounts.system_program.to_account_info(), cpi_accounts);
     transfer(cpi_ctx, stake_lamports)?;
 
-    // record receipt
+
     let receipt = &mut ctx.accounts.proposal_receipt;
     receipt.poll = poll.key();
     receipt.side = side.clone();
@@ -156,7 +159,7 @@ pub fn challenge_poll(
     receipt.amount_staked = stake_lamports;
     receipt.claimed = false;
 
-    // update pool tallies
+
     match side {
         PollOutcome::Yes => {
             ctx.accounts.dispute_yes.total_stake += stake_lamports;
@@ -169,7 +172,7 @@ pub fn challenge_poll(
         _ => {}
     }
 
-    // switch poll to disputed state and record vault pubkeys
+
     poll.status = PollStatus::Disputed;
     poll.dispute_yes = Some(ctx.accounts.dispute_yes.key());
     poll.dispute_no = Some(ctx.accounts.dispute_no.key());
@@ -191,7 +194,7 @@ pub fn join_dispute(
 
     let challenger = &ctx.accounts.participant;
 
-    // Transfer to chosen vault
+
     let target_vault = match side {
         PollOutcome::Yes => ctx.accounts.dispute_yes.to_account_info(),
         PollOutcome::No  => ctx.accounts.dispute_no.to_account_info(),
@@ -204,7 +207,7 @@ pub fn join_dispute(
     let cpi_ctx = CpiContext::new(ctx.accounts.system_program.to_account_info(), cpi_accounts);
     transfer(cpi_ctx, stake_lamports)?;
 
-    // update pool
+
     match side {
         PollOutcome::Yes => {
             ctx.accounts.dispute_yes.total_stake += stake_lamports;
@@ -217,7 +220,7 @@ pub fn join_dispute(
         _ => {}
     }
 
-    // receipt
+
     let receipt = &mut ctx.accounts.proposal_receipt;
     receipt.poll = poll.key();
     receipt.side = side.clone();
@@ -256,7 +259,7 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
     poll.outcome = final_outcome;
     poll.status = PollStatus::Closed;
 
-    // === Economics ===
+
     let global_config = &ctx.accounts.global_config;
     let total_stake = poll.total_stake as u128;
 
@@ -279,7 +282,7 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
     poll.econ_cut = econ_cut as u64;
     poll.payout_pool = payout_pool as u64;
 
-    // === Transfers ===
+
     let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
 
     transfer_lamports(
@@ -311,7 +314,7 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
         Some(seeds),
     )?;
 
-    // === Character nudge ===
+
     let subject = poll.subjects.first().ok_or(CustomError::InvalidState)?;
     apply_character_nudge(
         &mut ctx.accounts.character_price_state,
@@ -324,12 +327,6 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
 
     Ok(())
 }
-
-
-
-
-
-
 
 
 pub fn claim_reward(ctx: Context<ClaimReward>
@@ -348,7 +345,7 @@ pub fn claim_reward(ctx: Context<ClaimReward>
     };
 
     if is_winner {
-        // proportional share (1e6 fixed-point)
+
         let total_winner_stake = match poll.outcome {
             PollOutcome::Yes => poll.stake_yes,
             PollOutcome::No => poll.stake_no,
@@ -394,7 +391,7 @@ pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
     require!(poll.status == PollStatus::Closed, CustomError::InvalidState);
     require!(!receipt.claimed, CustomError::AlreadyClaimed);
 
-    // determine which side won
+
     let (winner_vault, loser_vault, winner_side, winner_participants, loser_total) = match poll.outcome {
         PollOutcome::Yes => (
             ctx.accounts.dispute_yes.to_account_info(),
@@ -413,12 +410,12 @@ pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
         _ => return Err(error!(CustomError::InvalidState)),
     };
 
-    // only winners can claim
+
     require!(receipt.side == winner_side, CustomError::InvalidReceipt);
     require!(winner_participants > 0, CustomError::InvalidState);
 
-    // --- Equal distribution logic ---
-    // each winner gets their own stake + (losers' stake / total winners)
+
+
     let equal_share = (loser_total as u128)
         .checked_div(winner_participants as u128)
         .unwrap_or(0);
@@ -427,7 +424,7 @@ pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
         .checked_add(equal_share)
         .unwrap() as u64;
 
-    // transfer from winning dispute vault PDA → winner
+
     let seeds = match poll.outcome {
         PollOutcome::Yes => &[b"dispute_yes", poll.poll_id.as_ref()],
         PollOutcome::No => &[b"dispute_no", poll.poll_id.as_ref()],
@@ -451,18 +448,18 @@ pub fn apply_character_nudge<'info>(
     treasury: &AccountInfo<'info>,
     poll: &Poll,
     to_character: u64,
-    direction_if_yes: i8, // directly passed from PollSubject
+    direction_if_yes: i8, 
 ) -> Result<()> {
     let t_old = treasury.lamports();
     let t_new = t_old.checked_add(to_character).unwrap();
 
-    // === Sentiment signal ===
+
     let w_yes = poll.w_yes as i128;
     let w_no = poll.w_no as i128;
     let w_total = (w_yes + w_no).max(1);
 
-    // if poll.outcome == Yes → use direction_if_yes
-    // if poll.outcome == No → invert it
+
+
     let dir_effect = match poll.outcome {
         PollOutcome::Yes => direction_if_yes as i128,
         PollOutcome::No => -(direction_if_yes as i128),
@@ -471,18 +468,18 @@ pub fn apply_character_nudge<'info>(
 
     let s_fp = ((w_yes - w_no) * dir_effect * 1_000_000) / w_total;
 
-    // === stake factor ===
+
     let total_stake = poll.total_stake as i128;
     let alpha_fp = 200_000; // 0.2
     let stake_ref = (alpha_fp * (t_old as i128)) / 1_000_000;
     let sqrt_ratio = fixed_sqrt_fp((total_stake * 1_000_000) / stake_ref);
     let f_fp = sqrt_ratio.min(1_000_000);
 
-    // === multiplier ===
+
     let k_fp = poll.k_override.unwrap_or(poll.lambda_fp) as i128;
     let m_fp = 1_000_000 + ((k_fp * s_fp * f_fp) / (1_000_000i128.pow(2)));
 
-    // === price ===
+
     let base_price_fp = ((t_new as i128) * 1_000_000) / (character.supply as i128);
     let new_price_fp = (base_price_fp * m_fp) / 1_000_000;
 
@@ -492,7 +489,7 @@ pub fn apply_character_nudge<'info>(
 }
 
 
-// integer sqrt (for fixed-point math)
+
 fn fixed_sqrt_fp(x_fp: i128) -> i128 {
     if x_fp <= 0 { return 0; }
     let mut z = x_fp;

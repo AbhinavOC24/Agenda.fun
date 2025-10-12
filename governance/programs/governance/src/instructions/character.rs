@@ -16,7 +16,7 @@ pub fn create_character(
     character.stock_mint = ctx.accounts.stock_mint.key();
 
     let ps = &mut ctx.accounts.character_price_state;
-    ps.character = char_slug.clone();
+    ps.character = character.char_slug.clone();
     ps.week_start_ts = Clock::get()?.unix_timestamp;
     character.base_price_fp = 10_u128 * 1_000_000;
     ps.last_price_fp = character.base_price_fp;

@@ -5,7 +5,7 @@ use anchor_lang::prelude::*;
 
 declare_id!("6iMHRA5osY1Yb2Gi9t4WSBxBxsaU51fgD1JPiRinNDWD");
 
-// Register submodules
+
 pub mod instructions;
 pub mod state;
 pub mod utils;
@@ -61,29 +61,33 @@ pub mod governance {
     pub fn create_poll(
         ctx: Context<CreatePoll>,
         poll_id: [u8;32],
+        fandom_id:[u8;32],
         subjects: Vec<PollSubject>,
         start_ts: i64,
-        challenge_end_ts:i64,
         end_ts: i64,
+        challenge_end_ts:i64,
+        metadata_hash:[u8;32],
         lambda_fp: i32,
         k_override: Option<i32>,
     ) -> Result<()> {
-        instructions::poll::create_poll(ctx, poll_id, subjects, start_ts,challenge_end_ts, end_ts, lambda_fp, k_override)
+        instructions::poll::create_poll(ctx, poll_id,subjects, start_ts,challenge_end_ts, end_ts,metadata_hash, lambda_fp, k_override)
     }
 
     pub fn vote(
         ctx: Context<Vote>,
         poll_id: [u8;32],
+        fandom_id: [u8;32],
         side: PollChoice,
         stake_lamports: u64,
     ) -> Result<()> {
-        instructions::poll::vote(ctx, poll_id, side, stake_lamports)
+        instructions::poll::vote(ctx, poll_id, fandom_id, side, stake_lamports)
     }
     pub fn resolve_poll_auto(
         ctx: Context<ResolvePoll>,
         poll_id: [u8; 32],
+        fandom_id:[u8;32],
     ) -> Result<()> {
-        instructions::poll::resolve_poll_auto(ctx, poll_id)
+        instructions::poll::resolve_poll_auto(ctx, poll_id,fandom_id)
     }
 
     pub fn challenge_poll(
