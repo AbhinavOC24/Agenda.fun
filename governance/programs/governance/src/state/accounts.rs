@@ -95,6 +95,8 @@ pub struct Poll {
     pub status: PollStatus,
     pub outcome: PollOutcome,
     pub dispute_pool:u64,
+
+
     pub dispute_yes: Option<Pubkey>,
     pub dispute_no: Option<Pubkey>,
 

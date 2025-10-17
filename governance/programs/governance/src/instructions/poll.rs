@@ -164,10 +164,12 @@ pub fn challenge_poll(
         PollOutcome::Yes => {
             ctx.accounts.dispute_yes.total_stake += stake_lamports;
             ctx.accounts.dispute_yes.tot_participants += 1;
+
         }
         PollOutcome::No => {
             ctx.accounts.dispute_no.total_stake += stake_lamports;
             ctx.accounts.dispute_no.tot_participants += 1;
+            
         }
         _ => {}
     }
@@ -247,13 +249,14 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
 
     let final_outcome = if poll.status == PollStatus::Disputed {
 
-        if ctx.accounts.dispute_yes.total_stake >= ctx.accounts.dispute_no.total_stake {
+        if ctx.accounts.dispute_yes.tot_participants >= ctx.accounts.dispute_no.tot_participants {
             PollOutcome::Yes
         } else {
             PollOutcome::No
         }
     } else {
 
+        
         poll.proposer_side.clone()
     };
     poll.outcome = final_outcome;
@@ -414,15 +417,27 @@ pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
     require!(receipt.side == winner_side, CustomError::InvalidReceipt);
     require!(winner_participants > 0, CustomError::InvalidState);
 
+    
+    let total_winner_stake = match poll.outcome {
+        PollOutcome::Yes => ctx.accounts.dispute_yes.total_stake,
+        PollOutcome::No  => ctx.accounts.dispute_no.total_stake,
+        _ => 1,
+    } as u128;
 
+    let share_fp = (receipt.amount_staked as u128)
+    .checked_mul(1_000_000u128)
+    .unwrap()
+    .checked_div(total_winner_stake)
+    .unwrap();
 
-    let equal_share = (loser_total as u128)
-        .checked_div(winner_participants as u128)
-        .unwrap_or(0);
+    let reward_u128 = (loser_total as u128)
+    .checked_mul(share_fp)
+    .unwrap()
+    .checked_div(1_000_000u128)
+    .unwrap();
 
-    let total_reward = (receipt.amount_staked as u128)
-        .checked_add(equal_share)
-        .unwrap() as u64;
+    let total_reward = (receipt.amount_staked as u128).checked_add(reward_u128 as u128).unwrap() as u64;
+
 
 
     let seeds = match poll.outcome {
