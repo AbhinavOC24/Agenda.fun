@@ -34,4 +34,8 @@ pub enum CustomError {
     InvalidVault,
     #[msg("Poll in the receipt doesn't match")]
     InvalidReceipt,
+    #[msg("You are not eligible to claim this reward.")]
+    NotWinner,
+    #[msg("No reward available for this claim.")]
+    NoReward,
 }
