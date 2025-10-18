@@ -41,6 +41,16 @@ pub fn create_poll(
 
     poll.escrow_vault = ctx.accounts.poll_escrow.key();
     poll.escrow_bump=ctx.bumps.poll_escrow;
+    emit!(PollCreated {
+        poll_id,
+        fandom_id: fandom.key().to_bytes(),
+        creator: ctx.accounts.admin.key(),
+        start_ts,
+        end_ts,
+        challenge_end_ts,
+        status: "Open".to_string(),
+    });
+    
     Ok(())
 }
 
@@ -93,6 +103,17 @@ pub fn vote(ctx:Context<Vote>,poll_id:[u8;32],fandom_id:[u8;32],side:PollChoice,
         }
     }
 
+
+    emit!(VoteCast {
+        poll: poll.key(),
+        voter: voter.key(),
+        side: match side {
+            PollChoice::Yes => "Yes".to_string(),
+            PollChoice::No => "No".to_string(),
+        },
+        stake: stake_lamports,
+    });
+    
         Ok(())
 }
 
@@ -112,6 +133,15 @@ pub fn resolve_poll_auto(ctx: Context<ResolvePoll>, poll_id: [u8; 32],fandom_id:
     poll.status = PollStatus::ChallengeWindow;
 
 
+    emit!(PollResolved {
+        poll: poll.key(),
+        outcome: match poll.proposer_side {
+            PollOutcome::Yes => "Yes".to_string(),
+            PollOutcome::No => "No".to_string(),
+            _ => "Unset".to_string(),
+        },
+    });
+    
     Ok(())
 }
 
@@ -129,10 +159,7 @@ pub fn challenge_poll(
     require!(stake_lamports > 0, CustomError::InvalidInput);
 
 
-    require!(
-        side != poll.proposer_side && poll.proposer_side != PollOutcome::Unset,
-        CustomError::InvalidInput
-    );
+    require!(side != poll.proposer_side && poll.proposer_side != PollOutcome::Unset,CustomError::InvalidInput);
 
 
     poll.locked_dispute_amount = stake_lamports;
@@ -178,7 +205,19 @@ pub fn challenge_poll(
     poll.status = PollStatus::Disputed;
     poll.dispute_yes = Some(ctx.accounts.dispute_yes.key());
     poll.dispute_no = Some(ctx.accounts.dispute_no.key());
+    
 
+    emit!(DisputeOpened {
+        poll: poll.key(),
+        side: match side {
+            PollOutcome::Yes => "Yes".to_string(),
+            PollOutcome::No => "No".to_string(),
+            _ => "Unset".to_string(),
+        },
+        challenger: ctx.accounts.challenger.key(),
+        stake: stake_lamports,
+    });
+    
     Ok(())
 }
 
@@ -237,14 +276,8 @@ pub fn join_dispute(
 pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
     let poll = &mut ctx.accounts.poll;
 
-    require!(
-        poll.status == PollStatus::ChallengeWindow || poll.status == PollStatus::Disputed,
-        CustomError::InvalidState
-    );
-    require!(
-        Clock::get()?.unix_timestamp > poll.challenge_end_ts,
-        CustomError::ChallengeWindowStillOpen
-    );
+    require!(poll.status == PollStatus::ChallengeWindow || poll.status == PollStatus::Disputed,CustomError::InvalidState);
+    require!(Clock::get()?.unix_timestamp > poll.challenge_end_ts,CustomError::ChallengeWindowStillOpen);
 
 
     let final_outcome = if poll.status == PollStatus::Disputed {
@@ -328,12 +361,27 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
         subject.direction_if_yes,
     )?;
 
-    Ok(())
+
+    emit!(PollSettled {
+        poll: poll.key(),
+        final_outcome: match poll.outcome {
+            PollOutcome::Yes => "Yes".to_string(),
+            PollOutcome::No => "No".to_string(),
+            _ => "Unset".to_string(),
+        },
+        total_stake: poll.total_stake,
+        payout_pool: poll.payout_pool,
+    });
+    
+    Ok(()) 
 }
 
 
-pub fn claim_reward(ctx: Context<ClaimReward>
-    , poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
+pub fn claim_reward(
+    ctx: Context<ClaimReward>,
+    _poll_id: [u8; 32],
+    _fandom_id: [u8; 32],
+) -> Result<()> {
     let poll = &ctx.accounts.poll;
     let receipt = &mut ctx.accounts.vote_receipt;
 
@@ -341,110 +389,106 @@ pub fn claim_reward(ctx: Context<ClaimReward>
     require!(!receipt.claimed, CustomError::AlreadyClaimed);
 
 
-    let is_winner = match (poll.outcome.clone(), receipt.side.clone()) {
-        (PollOutcome::Yes, PollChoice::Yes) => true,
-        (PollOutcome::No, PollChoice::No) => true,
-        _ => false,
-    };
+    let is_winner = matches!(
+        (poll.outcome.clone(), receipt.side.clone()),
+        (PollOutcome::Yes, PollChoice::Yes) | (PollOutcome::No, PollChoice::No)
+    );
+    require!(is_winner, CustomError::NotWinner);
 
-    if is_winner {
+    
+    let total_winner_stake = match poll.outcome {
+        PollOutcome::Yes => poll.stake_yes,
+        PollOutcome::No => poll.stake_no,
+        _ => 0,
+    } as u128;
+    require!(total_winner_stake > 0, CustomError::NoReward);
 
-        let total_winner_stake = match poll.outcome {
-            PollOutcome::Yes => poll.stake_yes,
-            PollOutcome::No => poll.stake_no,
-            _ => 1,
-        } as u128;
+    let share_fp = (receipt.amount_staked as u128)
+        .checked_mul(1_000_000u128).unwrap()
+        .checked_div(total_winner_stake).unwrap();
 
-        let share_fp = (receipt.amount_staked as u128)
-            .checked_mul(1_000_000u128)
-            .unwrap()
-            .checked_div(total_winner_stake)
-            .unwrap();
+    let reward_u128 = (poll.payout_pool as u128)
+        .checked_mul(share_fp).unwrap()
+        .checked_div(1_000_000u128).unwrap();
 
-        let reward_u128 = (poll.payout_pool as u128)
-            .checked_mul(share_fp)
-            .unwrap()
-            .checked_div(1_000_000u128)
-            .unwrap();
+    let reward: u64 = reward_u128 as u64;
+    require!(reward > 0, CustomError::NoReward);
 
-        let reward = reward_u128 as u64;
-
-
-        let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
-        transfer_lamports(
-            ctx.accounts.poll_escrow.to_account_info(),
-            ctx.accounts.voter.to_account_info(),
-            reward,
-            ctx.accounts.system_program.to_account_info(),
-            Some(seeds),
-        )?;
-    }
+    // Pay from escrow PDA
+    let seeds = &[b"poll_escrow", poll.poll_id.as_ref(), &[poll.escrow_bump]];
+    transfer_lamports(
+        ctx.accounts.poll_escrow.to_account_info(),
+        ctx.accounts.voter.to_account_info(),
+        reward,
+        ctx.accounts.system_program.to_account_info(),
+        Some(seeds),
+    )?;
 
     receipt.claimed = true;
+
+    // Emit only on successful payout
+    emit!(RewardClaimed {
+        poll: poll.key(),
+        user: ctx.accounts.voter.key(),
+        amount: reward,
+        challenge: false,
+    });
+
     Ok(())
 }
 
-
-
-pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
-    , poll_id: [u8; 32],fandom_id:[u8;32]) -> Result<()> {
+pub fn claim_challenge_reward(
+    ctx: Context<ClaimChallengeReward>,
+    _poll_id: [u8; 32],
+    _fandom_id: [u8; 32],
+) -> Result<()> {
     let poll = &ctx.accounts.poll;
     let receipt = &mut ctx.accounts.proposal_receipt;
 
     require!(poll.status == PollStatus::Closed, CustomError::InvalidState);
     require!(!receipt.claimed, CustomError::AlreadyClaimed);
 
-
-    let (winner_vault, loser_vault, winner_side, winner_participants, loser_total) = match poll.outcome {
+    let (winner_vault, winner_side, loser_total) = match poll.outcome {
         PollOutcome::Yes => (
             ctx.accounts.dispute_yes.to_account_info(),
-            ctx.accounts.dispute_no.to_account_info(),
             PollOutcome::Yes,
-            ctx.accounts.dispute_yes.tot_participants,
             ctx.accounts.dispute_no.total_stake,
         ),
         PollOutcome::No => (
             ctx.accounts.dispute_no.to_account_info(),
-            ctx.accounts.dispute_yes.to_account_info(),
             PollOutcome::No,
-            ctx.accounts.dispute_no.tot_participants,
             ctx.accounts.dispute_yes.total_stake,
         ),
         _ => return Err(error!(CustomError::InvalidState)),
     };
 
+    require!(receipt.side == winner_side, CustomError::NotWinner);
 
-    require!(receipt.side == winner_side, CustomError::InvalidReceipt);
-    require!(winner_participants > 0, CustomError::InvalidState);
-
-    
     let total_winner_stake = match poll.outcome {
         PollOutcome::Yes => ctx.accounts.dispute_yes.total_stake,
         PollOutcome::No  => ctx.accounts.dispute_no.total_stake,
-        _ => 1,
+        _ => 0,
     } as u128;
+    require!(total_winner_stake > 0, CustomError::NoReward);
 
     let share_fp = (receipt.amount_staked as u128)
-    .checked_mul(1_000_000u128)
-    .unwrap()
-    .checked_div(total_winner_stake)
-    .unwrap();
+        .checked_mul(1_000_000u128).unwrap()
+        .checked_div(total_winner_stake).unwrap();
 
     let reward_u128 = (loser_total as u128)
-    .checked_mul(share_fp)
-    .unwrap()
-    .checked_div(1_000_000u128)
-    .unwrap();
+        .checked_mul(share_fp).unwrap()
+        .checked_div(1_000_000u128).unwrap();
 
-    let total_reward = (receipt.amount_staked as u128).checked_add(reward_u128 as u128).unwrap() as u64;
-
-
+    let total_reward: u64 = (receipt.amount_staked as u128)
+        .checked_add(reward_u128).unwrap() as u64;
+    require!(total_reward > 0, CustomError::NoReward);
 
     let seeds = match poll.outcome {
         PollOutcome::Yes => &[b"dispute_yes", poll.poll_id.as_ref()],
-        PollOutcome::No => &[b"dispute_no", poll.poll_id.as_ref()],
+        PollOutcome::No  => &[b"dispute_no",  poll.poll_id.as_ref()],
         _ => return Err(error!(CustomError::InvalidState)),
     };
+
     transfer_lamports(
         winner_vault,
         ctx.accounts.staker.to_account_info(),
@@ -454,8 +498,17 @@ pub fn claim_challenge_reward(ctx: Context<ClaimChallengeReward>
     )?;
 
     receipt.claimed = true;
+
+    emit!(RewardClaimed {
+        poll: poll.key(),
+        user: ctx.accounts.staker.key(),
+        amount: total_reward,
+        challenge: true,
+    });
+
     Ok(())
 }
+
 
 pub fn apply_character_nudge<'info>(
     price_state: &mut Account<'info, PriceState>,

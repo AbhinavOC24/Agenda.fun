@@ -90,8 +90,19 @@ pub fn buy_stock(
     
     
                 emit!(PriceUpdate {
-                    character: char_slug,
+                    character: char_slug.clone(),
                     price_fp: ps.last_price_fp,
+                    ts: ps.week_start_ts,
+                });
+
+                emit!(StockBought {
+                    fandom_id,
+                    character: char_slug,
+                    buyer: ctx.accounts.buyer.key(),
+                    lamports_in,
+                    shares_out,
+                    price_fp: new_price_fp,
+                    new_supply: supply_after,
                     ts: ps.week_start_ts,
                 });
         
@@ -176,8 +187,19 @@ pub fn sell_stock(
                 ((new_treasury_balance as u128) * 1_000_000u128) / (character.supply as u128);
         
             emit!(PriceUpdate {
-                character: char_slug,
+                character: char_slug.clone(),
                 price_fp: ps.last_price_fp,
+                ts: Clock::get()?.unix_timestamp,
+            });
+
+            emit!(StockSold {
+                fandom_id,
+                character: char_slug,
+                seller: ctx.accounts.seller.key(),
+                shares_in,
+                lamports_out,
+                price_fp: ps.last_price_fp,
+                new_supply: character.supply,
                 ts: Clock::get()?.unix_timestamp,
             });
         
