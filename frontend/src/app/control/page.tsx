@@ -12,16 +12,477 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
+import { AnchorProvider, Program, Idl } from "@project-serum/anchor";
 
-// Mock function to simulate smart contract calls
-const mockContractCall = async (functionName: string, params: any) => {
-  console.log(`Calling ${functionName} with params:`, params);
-  // Simulate async operation
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  return { success: true, txHash: `mock_tx_${Date.now()}` };
+import idl from "../../../../governance/target/idl/governance.json";
+
+const PROGRAM_ID = new PublicKey(
+  "6iMHRA5osY1Yb2Gi9t4WSBxBxsaU51fgD1JPiRinNDWD"
+);
+const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+
+// Helper function to convert string to 32-byte array
+const stringToBytes32 = (str: string): number[] => {
+  const bytes = new Uint8Array(32);
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(str);
+  bytes.set(encoded.slice(0, 32));
+  return Array.from(bytes);
 };
 
+async function anchorCall(fn: string, params: any, wallet: any) {
+  if (!wallet) throw new Error("Wallet not connected");
+
+  const provider = new AnchorProvider(connection, wallet, {
+    preflightCommitment: "processed",
+  });
+  const program = new Program(idl as any, PROGRAM_ID, provider);
+
+  console.log("▶️ Executing:", fn, params);
+
+  const admin = wallet.publicKey;
+  const fandomId = params.fandom_id ? Buffer.from(params.fandom_id) : null;
+  const charSlug = params.char_slug;
+  const pollId = params.poll_id ? Buffer.from(params.poll_id) : null;
+
+  let tx;
+
+  switch (fn) {
+    // ---------------- Global ----------------
+    case "init_global":
+      tx = await program.methods
+        .initGlobal(
+          params.fee_bps,
+          params.r_burn,
+          params.r_global,
+          params.r_char,
+          params.k,
+          new PublicKey(params.usdc_mint),
+          new PublicKey(params.platform_wallet)
+        )
+        .accounts({
+          globalConfig: PublicKey.findProgramAddressSync(
+            [Buffer.from("global_config")],
+            PROGRAM_ID
+          )[0],
+          globalTreasury: PublicKey.findProgramAddressSync(
+            [Buffer.from("global_treasury")],
+            PROGRAM_ID
+          )[0],
+          admin,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    // ---------------- Fandom ----------------
+    case "create_fandom":
+      tx = await program.methods
+        .createFandom(params.fandom_id, params.name)
+        .accounts({
+          fandom: PublicKey.findProgramAddressSync(
+            [Buffer.from("fandom"), Uint8Array.from(params.fandom_id)],
+            PROGRAM_ID
+          )[0],
+          globalConfig: PublicKey.findProgramAddressSync(
+            [Buffer.from("global_config")],
+            PROGRAM_ID
+          )[0],
+          admin,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    // ---------------- Character ----------------
+    case "create_character":
+      tx = await program.methods
+        .createCharacter(params.fandom_id, params.char_slug, params.supply)
+        .accounts({
+          fandom: PublicKey.findProgramAddressSync(
+            [Buffer.from("fandom"), Uint8Array.from(params.fandom_id)],
+            PROGRAM_ID
+          )[0],
+          character: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("character"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterTreasury: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_treasury"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterPriceState: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_price_state"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          stockMint: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("stock_mint"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          admin,
+          tokenProgram: new PublicKey(
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          ),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    // ---------------- Buy Stock ----------------
+    case "buy_stock":
+      const buyerAta = PublicKey.findProgramAddressSync(
+        [
+          admin.toBuffer(),
+          new PublicKey(
+            "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          ).toBuffer(),
+          PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("stock_mint"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0].toBuffer(),
+        ],
+        new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+      )[0];
+
+      tx = await program.methods
+        .buyStock(
+          params.fandom_id,
+          params.char_slug,
+          params.lamports_in,
+          params.min_shares_out
+        )
+        .accounts({
+          buyer: admin,
+          fandom: PublicKey.findProgramAddressSync(
+            [Buffer.from("fandom"), Uint8Array.from(params.fandom_id)],
+            PROGRAM_ID
+          )[0],
+          character: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("character"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterTreasury: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_treasury"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterPriceState: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_price_state"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          stockMint: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("stock_mint"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          buyerAta,
+          associatedTokenProgram: new PublicKey(
+            "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          ),
+          rent: new PublicKey("SysvarRent111111111111111111111111111111111"),
+          tokenProgram: new PublicKey(
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          ),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    // ---------------- Sell Stock ----------------
+    case "sell_stock":
+      const sellerAta = PublicKey.findProgramAddressSync(
+        [
+          admin.toBuffer(),
+          new PublicKey(
+            "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          ).toBuffer(),
+          PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("stock_mint"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0].toBuffer(),
+        ],
+        new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+      )[0];
+
+      tx = await program.methods
+        .sellStock(params.shares_in, params.fandom_id, params.char_slug)
+        .accounts({
+          seller: admin,
+          character: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("character"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterTreasury: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_treasury"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          priceState: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_price_state"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          stockMint: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("stock_mint"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          sellerAta,
+          tokenProgram: new PublicKey(
+            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          ),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    // ---------------- Poll ----------------
+    case "create_poll":
+      tx = await program.methods
+        .createPoll(
+          params.poll_id,
+          params.fandom_id,
+          params.subjects,
+          params.start_ts,
+          params.end_ts,
+          params.challenge_end_ts,
+          params.metadata_hash,
+          params.lambda_fp,
+          params.k_override
+        )
+        .accounts({
+          admin,
+          globalConfig: PublicKey.findProgramAddressSync(
+            [Buffer.from("global_config")],
+            PROGRAM_ID
+          )[0],
+          fandom: PublicKey.findProgramAddressSync(
+            [Buffer.from("fandom"), Uint8Array.from(params.fandom_id)],
+            PROGRAM_ID
+          )[0],
+          poll: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("poll"),
+              Uint8Array.from(params.fandom_id),
+              Uint8Array.from(params.poll_id),
+            ],
+            PROGRAM_ID
+          )[0],
+          pollEscrow: PublicKey.findProgramAddressSync(
+            [Buffer.from("poll_escrow"), Uint8Array.from(params.poll_id)],
+            PROGRAM_ID
+          )[0],
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    case "resolve_poll_auto":
+      tx = await program.methods
+        .resolvePollAuto(params.poll_id, params.fandom_id)
+        .accounts({
+          anyone: admin,
+          poll: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("poll"),
+              Uint8Array.from(params.fandom_id),
+              Uint8Array.from(params.poll_id),
+            ],
+            PROGRAM_ID
+          )[0],
+        })
+        .rpc();
+      break;
+
+    case "challenge_poll":
+      tx = await program.methods
+        .challengePoll(
+          params.poll_id,
+          params.fandom_id,
+          params.side,
+          params.stake_lamports
+        )
+        .accounts({
+          poll: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("poll"),
+              Uint8Array.from(params.fandom_id),
+              Uint8Array.from(params.poll_id),
+            ],
+            PROGRAM_ID
+          )[0],
+          challenger: admin,
+          disputeYes: PublicKey.findProgramAddressSync(
+            [Buffer.from("dispute_yes"), Uint8Array.from(params.poll_id)],
+            PROGRAM_ID
+          )[0],
+          disputeNo: PublicKey.findProgramAddressSync(
+            [Buffer.from("dispute_no"), Uint8Array.from(params.poll_id)],
+            PROGRAM_ID
+          )[0],
+          proposalReceipt: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("proposal_receipt"),
+              Uint8Array.from(params.poll_id),
+              admin.toBuffer(),
+            ],
+            PROGRAM_ID
+          )[0],
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    case "join_dispute":
+      tx = await program.methods
+        .joinDispute(params.side, params.stake_lamports)
+        .accounts({
+          poll: new PublicKey(params.poll),
+          fandom: new PublicKey(params.fandom),
+          disputeYes: new PublicKey(params.dispute_yes),
+          disputeNo: new PublicKey(params.dispute_no),
+          proposalReceipt: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("proposal_receipt"),
+              Uint8Array.from(params.poll_id),
+              admin.toBuffer(),
+            ],
+            PROGRAM_ID
+          )[0],
+          participant: admin,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    case "settle_poll":
+      tx = await program.methods
+        .settlePoll(params.poll_id, params.fandom_id)
+        .accounts({
+          poll: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("poll"),
+              Uint8Array.from(params.fandom_id),
+              Uint8Array.from(params.poll_id),
+            ],
+            PROGRAM_ID
+          )[0],
+          disputeYes: PublicKey.findProgramAddressSync(
+            [Buffer.from("dispute_yes"), Uint8Array.from(params.poll_id)],
+            PROGRAM_ID
+          )[0],
+          disputeNo: PublicKey.findProgramAddressSync(
+            [Buffer.from("dispute_no"), Uint8Array.from(params.poll_id)],
+            PROGRAM_ID
+          )[0],
+          globalConfig: PublicKey.findProgramAddressSync(
+            [Buffer.from("global_config")],
+            PROGRAM_ID
+          )[0],
+          globalTreasury: PublicKey.findProgramAddressSync(
+            [Buffer.from("global_treasury")],
+            PROGRAM_ID
+          )[0],
+          character: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("character"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.subjects[0].char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterTreasury: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_treasury"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.subjects[0].char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          characterPriceState: PublicKey.findProgramAddressSync(
+            [
+              Buffer.from("char_price_state"),
+              Uint8Array.from(params.fandom_id),
+              Buffer.from(params.subjects[0].char_slug),
+            ],
+            PROGRAM_ID
+          )[0],
+          pollEscrow: PublicKey.findProgramAddressSync(
+            [Buffer.from("poll_escrow"), Uint8Array.from(params.poll_id)],
+            PROGRAM_ID
+          )[0],
+          platformWallet: new PublicKey(params.platform_wallet),
+          burn: SystemProgram.programId,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+      break;
+
+    default:
+      throw new Error("Unknown function: " + fn);
+  }
+
+  console.log("✅ Tx:", tx);
+  return { success: true, txHash: tx };
+}
+
 export default function Control() {
+  const { wallet, connected } = useWallet();
+  const [loading, setLoading] = useState<string | null>(null);
+
   // Global Config State
   const [globalConfig, setGlobalConfig] = useState({
     feeBps: "",
@@ -75,8 +536,6 @@ export default function Control() {
     stakeLamports: "",
   });
 
-  const [loading, setLoading] = useState<string | null>(null);
-
   const handleGlobalConfig = async () => {
     setLoading("global");
     try {
@@ -89,10 +548,11 @@ export default function Control() {
         usdc_mint: globalConfig.usdcMint,
         platform_wallet: globalConfig.platformWallet,
       };
-      await mockContractCall("init_global", params);
-      alert("Global config initialized successfully!");
+      await anchorCall("init_global", params, wallet);
+      alert("✅ Global config initialized successfully!");
     } catch (error) {
-      alert("Error initializing global config");
+      console.error(error);
+      alert("❌ Error initializing global config: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -101,19 +561,17 @@ export default function Control() {
   const handleCreateFandom = async () => {
     setLoading("fandom");
     try {
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(fandomData.fandomId.padEnd(32, "\0"))
-      );
+      const fandomIdBytes = stringToBytes32(fandomData.fandomId);
 
       const params = {
-        fandom_id: Array.from(fandomIdBytes),
+        fandom_id: fandomIdBytes,
         name: fandomData.name,
       };
-      await mockContractCall("create_fandom", params);
-      alert("Fandom created successfully!");
+      await anchorCall("create_fandom", params, wallet);
+      alert("✅ Fandom created successfully!");
     } catch (error) {
-      alert("Error creating fandom");
+      console.error(error);
+      alert("❌ Error creating fandom: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -122,20 +580,18 @@ export default function Control() {
   const handleCreateCharacter = async () => {
     setLoading("character");
     try {
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(characterData.fandomId.padEnd(32, "\0"))
-      );
+      const fandomIdBytes = stringToBytes32(characterData.fandomId);
 
       const params = {
-        fandom_id: Array.from(fandomIdBytes),
+        fandom_id: fandomIdBytes,
         char_slug: characterData.charSlug,
         supply: parseInt(characterData.supply),
       };
-      await mockContractCall("create_character", params);
-      alert("Character created successfully!");
+      await anchorCall("create_character", params, wallet);
+      alert("✅ Character created successfully!");
     } catch (error) {
-      alert("Error creating character");
+      console.error(error);
+      alert("❌ Error creating character: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -144,21 +600,19 @@ export default function Control() {
   const handleBuyStock = async () => {
     setLoading("buyStock");
     try {
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(stockData.fandomId.padEnd(32, "\0"))
-      );
+      const fandomIdBytes = stringToBytes32(stockData.fandomId);
 
       const params = {
-        fandom_id: Array.from(fandomIdBytes),
+        fandom_id: fandomIdBytes,
         char_slug: stockData.charSlug,
         lamports_in: parseInt(stockData.lamportsIn),
         min_shares_out: parseInt(stockData.minSharesOut),
       };
-      await mockContractCall("buy_stock", params);
-      alert("Stock bought successfully!");
+      await anchorCall("buy_stock", params, wallet);
+      alert("✅ Stock bought successfully!");
     } catch (error) {
-      alert("Error buying stock");
+      console.error(error);
+      alert("❌ Error buying stock: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -167,20 +621,18 @@ export default function Control() {
   const handleSellStock = async () => {
     setLoading("sellStock");
     try {
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(stockData.fandomId.padEnd(32, "\0"))
-      );
+      const fandomIdBytes = stringToBytes32(stockData.fandomId);
 
       const params = {
         shares_in: parseInt(stockData.sharesIn),
-        fandom_id: Array.from(fandomIdBytes),
+        fandom_id: fandomIdBytes,
         char_slug: stockData.charSlug,
       };
-      await mockContractCall("sell_stock", params);
-      alert("Stock sold successfully!");
+      await anchorCall("sell_stock", params, wallet);
+      alert("✅ Stock sold successfully!");
     } catch (error) {
-      alert("Error selling stock");
+      console.error(error);
+      alert("❌ Error selling stock: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -189,36 +641,26 @@ export default function Control() {
   const handleCreatePoll = async () => {
     setLoading("createPoll");
     try {
-      const pollIdBytes = new Uint8Array(32);
-      pollIdBytes.set(
-        new TextEncoder().encode(pollData.pollId.padEnd(32, "\0"))
-      );
-
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(pollData.fandomId.padEnd(32, "\0"))
-      );
-
-      const metadataHashBytes = new Uint8Array(32);
-      metadataHashBytes.set(
-        new TextEncoder().encode(pollData.metadataHash.padEnd(32, "\0"))
-      );
+      const pollIdBytes = stringToBytes32(pollData.pollId);
+      const fandomIdBytes = stringToBytes32(pollData.fandomId);
+      const metadataHashBytes = stringToBytes32(pollData.metadataHash);
 
       const params = {
-        poll_id: Array.from(pollIdBytes),
-        fandom_id: Array.from(fandomIdBytes),
+        poll_id: pollIdBytes,
+        fandom_id: fandomIdBytes,
         subjects: JSON.parse(pollData.subjects || "[]"),
         start_ts: parseInt(pollData.startTs),
         end_ts: parseInt(pollData.endTs),
         challenge_end_ts: parseInt(pollData.challengeEndTs),
-        metadata_hash: Array.from(metadataHashBytes),
+        metadata_hash: metadataHashBytes,
         lambda_fp: parseInt(pollData.lambdaFp),
         k_override: pollData.kOverride ? parseInt(pollData.kOverride) : null,
       };
-      await mockContractCall("create_poll", params);
-      alert("Poll created successfully!");
+      await anchorCall("create_poll", params, wallet);
+      alert("✅ Poll created successfully!");
     } catch (error) {
-      alert("Error creating poll");
+      console.error(error);
+      alert("❌ Error creating poll: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -227,24 +669,18 @@ export default function Control() {
   const handleResolvePoll = async () => {
     setLoading("resolvePoll");
     try {
-      const pollIdBytes = new Uint8Array(32);
-      pollIdBytes.set(
-        new TextEncoder().encode(pollData.pollId.padEnd(32, "\0"))
-      );
-
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(pollData.fandomId.padEnd(32, "\0"))
-      );
+      const pollIdBytes = stringToBytes32(pollData.pollId);
+      const fandomIdBytes = stringToBytes32(pollData.fandomId);
 
       const params = {
-        poll_id: Array.from(pollIdBytes),
-        fandom_id: Array.from(fandomIdBytes),
+        poll_id: pollIdBytes,
+        fandom_id: fandomIdBytes,
       };
-      await mockContractCall("resolve_poll_auto", params);
-      alert("Poll resolved successfully!");
+      await anchorCall("resolve_poll_auto", params, wallet);
+      alert("✅ Poll resolved successfully!");
     } catch (error) {
-      alert("Error resolving poll");
+      console.error(error);
+      alert("❌ Error resolving poll: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -253,26 +689,20 @@ export default function Control() {
   const handleChallengePoll = async () => {
     setLoading("challengePoll");
     try {
-      const pollIdBytes = new Uint8Array(32);
-      pollIdBytes.set(
-        new TextEncoder().encode(disputeData.pollId.padEnd(32, "\0"))
-      );
-
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(disputeData.fandomId.padEnd(32, "\0"))
-      );
+      const pollIdBytes = stringToBytes32(disputeData.pollId);
+      const fandomIdBytes = stringToBytes32(disputeData.fandomId);
 
       const params = {
-        poll_id: Array.from(pollIdBytes),
-        fandom_id: Array.from(fandomIdBytes),
+        poll_id: pollIdBytes,
+        fandom_id: fandomIdBytes,
         side: disputeData.side,
         stake_lamports: parseInt(disputeData.stakeLamports),
       };
-      await mockContractCall("challenge_poll", params);
-      alert("Poll challenged successfully!");
+      await anchorCall("challenge_poll", params, wallet);
+      alert("✅ Poll challenged successfully!");
     } catch (error) {
-      alert("Error challenging poll");
+      console.error(error);
+      alert("❌ Error challenging poll: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -281,14 +711,46 @@ export default function Control() {
   const handleJoinDispute = async () => {
     setLoading("joinDispute");
     try {
+      const pollIdBytes = stringToBytes32(disputeData.pollId);
+      const fandomIdBytes = stringToBytes32(disputeData.fandomId);
+
+      // Get poll and dispute addresses
+      const pollAddress = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("poll"),
+          Buffer.from(fandomIdBytes),
+          Buffer.from(pollIdBytes),
+        ],
+        PROGRAM_ID
+      )[0];
+
+      const disputeYesAddress = PublicKey.findProgramAddressSync(
+        [Buffer.from("dispute_yes"), Buffer.from(pollIdBytes)],
+        PROGRAM_ID
+      )[0];
+
+      const disputeNoAddress = PublicKey.findProgramAddressSync(
+        [Buffer.from("dispute_no"), Buffer.from(pollIdBytes)],
+        PROGRAM_ID
+      )[0];
+
       const params = {
         side: disputeData.side,
         stake_lamports: parseInt(disputeData.stakeLamports),
+        poll: pollAddress.toString(),
+        fandom: PublicKey.findProgramAddressSync(
+          [Buffer.from("fandom"), Buffer.from(fandomIdBytes)],
+          PROGRAM_ID
+        )[0].toString(),
+        dispute_yes: disputeYesAddress.toString(),
+        dispute_no: disputeNoAddress.toString(),
+        poll_id: pollIdBytes,
       };
-      await mockContractCall("join_dispute", params);
-      alert("Joined dispute successfully!");
+      await anchorCall("join_dispute", params, wallet);
+      alert("✅ Joined dispute successfully!");
     } catch (error) {
-      alert("Error joining dispute");
+      console.error(error);
+      alert("❌ Error joining dispute: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
@@ -297,33 +759,40 @@ export default function Control() {
   const handleSettlePoll = async () => {
     setLoading("settlePoll");
     try {
-      const pollIdBytes = new Uint8Array(32);
-      pollIdBytes.set(
-        new TextEncoder().encode(pollData.pollId.padEnd(32, "\0"))
-      );
-
-      const fandomIdBytes = new Uint8Array(32);
-      fandomIdBytes.set(
-        new TextEncoder().encode(pollData.fandomId.padEnd(32, "\0"))
-      );
+      const pollIdBytes = stringToBytes32(pollData.pollId);
+      const fandomIdBytes = stringToBytes32(pollData.fandomId);
 
       const params = {
-        poll_id: Array.from(pollIdBytes),
-        fandom_id: Array.from(fandomIdBytes),
+        poll_id: pollIdBytes,
+        fandom_id: fandomIdBytes,
+        subjects: JSON.parse(pollData.subjects || "[]"),
+        platform_wallet: globalConfig.platformWallet,
       };
-      await mockContractCall("settle_poll", params);
-      alert("Poll settled successfully!");
+      await anchorCall("settle_poll", params, wallet);
+      alert("✅ Poll settled successfully!");
     } catch (error) {
-      alert("Error settling poll");
+      console.error(error);
+      alert("❌ Error settling poll: " + (error as Error).message);
     } finally {
       setLoading(null);
     }
   };
 
+  if (!connected) {
+    return (
+      <div className="container mx-auto p-6 text-center">
+        <h1 className="text-3xl font-bold mb-8">Governance Control Panel</h1>
+        <p className="text-lg text-muted-foreground">
+          Please connect your wallet to access the control panel.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto p-6 space-y-8">
       <h1 className="text-3xl font-bold text-center mb-8">
-        Governance Control Panel
+        Governance Control Panel (On-Chain)
       </h1>
 
       {/* Global Configuration */}
@@ -649,7 +1118,7 @@ export default function Control() {
                 onChange={(e) =>
                   setPollData({ ...pollData, subjects: e.target.value })
                 }
-                placeholder='[{"direction_if_yes": 1, "character": "character-1"}]'
+                placeholder='[{"char_slug": "character-1", "direction_if_yes": 1}]'
                 rows={3}
               />
             </div>
