@@ -27,8 +27,6 @@ pub struct GlobalConfigCreated {
     pub fee_bps: u16,
     pub r_burn: u16,
     pub r_global: u16,
-    pub r_char: u16,
-    pub k: i32,
     pub usdc_mint: Pubkey,
     pub platform_wallet: Pubkey,
     pub global_treasury: Pubkey,

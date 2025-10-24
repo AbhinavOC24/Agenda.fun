@@ -6,7 +6,6 @@ use crate::utils::*;
 pub fn create_poll(
     ctx: Context<CreatePoll>,
     poll_id: [u8; 32],
-    subjects: Vec<PollSubject>,
     start_ts: i64,
     challenge_end_ts:i64,
     end_ts: i64,
@@ -20,7 +19,6 @@ pub fn create_poll(
 
     poll.poll_id = poll_id;
     poll.fandom = fandom.key();
-    poll.subjects = subjects;
     poll.start_ts = start_ts;
     poll.end_ts = end_ts;
     poll.lambda_fp = lambda_fp;
@@ -308,7 +306,7 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
     let lambda_fp: u128 = poll.lambda_fp as u128;
     let econ_cut = after_fee.checked_mul(lambda_fp).unwrap() / 1_000_000u128;
 
-    let to_char = econ_cut.checked_mul(global_config.r_char as u128).unwrap() / 10_000u128;
+
     let to_global = econ_cut.checked_mul(global_config.r_global as u128).unwrap() / 10_000u128;
     let to_burn = econ_cut.checked_mul(global_config.r_burn as u128).unwrap() / 10_000u128;
 
@@ -330,13 +328,6 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
     )?;
     transfer_lamports(
         ctx.accounts.poll_escrow.to_account_info(),
-        ctx.accounts.character_treasury.to_account_info(),
-        to_char as u64,
-        ctx.accounts.system_program.to_account_info(),
-        Some(seeds),
-    )?;
-    transfer_lamports(
-        ctx.accounts.poll_escrow.to_account_info(),
         ctx.accounts.global_treasury.to_account_info(),
         to_global as u64,
         ctx.accounts.system_program.to_account_info(),
@@ -351,15 +342,7 @@ pub fn settle_poll(ctx: Context<SettlePoll>, poll_id: [u8; 32],fandom_id:[u8;32]
     )?;
 
 
-    let subject = poll.subjects.first().ok_or(CustomError::InvalidState)?;
-    apply_character_nudge(
-        &mut ctx.accounts.character_price_state,
-        &ctx.accounts.character,
-        &ctx.accounts.character_treasury.to_account_info(),
-        &poll,
-        to_char as u64,
-        subject.direction_if_yes,
-    )?;
+   
 
 
     emit!(PollSettled {
@@ -510,51 +493,6 @@ pub fn claim_challenge_reward(
 }
 
 
-pub fn apply_character_nudge<'info>(
-    price_state: &mut Account<'info, PriceState>,
-    character: &Account<'info, Character>,
-    treasury: &AccountInfo<'info>,
-    poll: &Poll,
-    to_character: u64,
-    direction_if_yes: i8, 
-) -> Result<()> {
-    let t_old = treasury.lamports();
-    let t_new = t_old.checked_add(to_character).unwrap();
-
-
-    let w_yes = poll.w_yes as i128;
-    let w_no = poll.w_no as i128;
-    let w_total = (w_yes + w_no).max(1);
-
-
-
-    let dir_effect = match poll.outcome {
-        PollOutcome::Yes => direction_if_yes as i128,
-        PollOutcome::No => -(direction_if_yes as i128),
-        _ => 0,
-    };
-
-    let s_fp = ((w_yes - w_no) * dir_effect * 1_000_000) / w_total;
-
-
-    let total_stake = poll.total_stake as i128;
-    let alpha_fp = 200_000; // 0.2
-    let stake_ref = (alpha_fp * (t_old as i128)) / 1_000_000;
-    let sqrt_ratio = fixed_sqrt_fp((total_stake * 1_000_000) / stake_ref);
-    let f_fp = sqrt_ratio.min(1_000_000);
-
-
-    let k_fp = poll.k_override.unwrap_or(poll.lambda_fp) as i128;
-    let m_fp = 1_000_000 + ((k_fp * s_fp * f_fp) / (1_000_000i128.pow(2)));
-
-
-    let base_price_fp = ((t_new as i128) * 1_000_000) / (character.supply as i128);
-    let new_price_fp = (base_price_fp * m_fp) / 1_000_000;
-
-    price_state.last_price_fp = new_price_fp.max(0) as u128;
-    price_state.week_start_ts = Clock::get()?.unix_timestamp;
-    Ok(())
-}
 
 
 
