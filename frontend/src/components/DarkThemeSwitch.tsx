@@ -2,9 +2,25 @@
 
 import { MoonIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
 
 export default function DarkThemeSwitch() {
   const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col justify-center">
+          <div className="inline-flex size-9 items-center justify-center rounded-md border border-input bg-background shadow-xs" />
+        </div>
+      </div>
+    );
+  }
 
   const isDark = theme === "dark";
 
