@@ -19,6 +19,7 @@
     "db:seed": "tsx src/seed.ts"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
     "@prisma/client": "^6.13.0",
     "@solana/web3.js": "^1.98.4",
     "cors": "^2.8.5",

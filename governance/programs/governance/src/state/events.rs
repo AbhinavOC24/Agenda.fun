@@ -33,12 +33,6 @@ pub struct GlobalConfigCreated {
     pub ts: i64,
 }
 
-#[event]
-pub struct PriceUpdate {
-    pub character: String,
-    pub price_fp: u128,
-    pub ts: i64,
-}
 
 
 
@@ -91,26 +85,3 @@ pub struct RewardClaimed {
     pub challenge: bool,
 }
 
-#[event]
-pub struct StockBought {
-    pub fandom_id: [u8; 32],
-    pub character: String,
-    pub buyer: Pubkey,
-    pub lamports_in: u64,
-    pub shares_out: u64,
-    pub price_fp: u128,
-    pub new_supply: u64,
-    pub ts: i64,
-}
-
-#[event]
-pub struct StockSold {
-    pub fandom_id: [u8; 32],
-    pub character: String,
-    pub seller: Pubkey,
-    pub shares_in: u64,
-    pub lamports_out: u64,
-    pub price_fp: u128,
-    pub new_supply: u64,
-    pub ts: i64,
-}

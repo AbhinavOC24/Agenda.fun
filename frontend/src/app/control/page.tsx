@@ -30,7 +30,7 @@ import type { Governance } from "../../../../governance/target/types/governance"
 import idl from "../../../../governance/target/idl/governance.json";
 
 const PROGRAM_ID = new PublicKey(
-  "FkWGiBMPiL8Weq3LWjcRydmafUBmGhHK9dkNaGuRzmeP"
+  "HCAdk3qPeYYYG1uYyrcG9fjTCSvmewJ8KdqWTvk7HSxR"
 );
 
 const stringToBytes32 = (str: string): number[] => {
@@ -172,8 +172,6 @@ export default function Control() {
             "confirmed"
           );
 
-          console.log("✅ Transaction confirmed");
-
           // Wait for event (with timeout)
           const eventTimeout = new Promise((_, reject) =>
             setTimeout(() => reject(new Error("Event timeout")), 10000)
@@ -243,8 +241,6 @@ export default function Control() {
             { signature, blockhash, lastValidBlockHeight },
             "confirmed"
           );
-
-          console.log("✅ Transaction confirmed");
 
           // Wait for event
           const fandomEventTimeout = new Promise((_, reject) =>
@@ -375,7 +371,7 @@ export default function Control() {
       // Alert is now handled inside each case with signature info
     } catch (err) {
       console.error("Error:", err);
-      alert("❌ " + (err as Error).message);
+      alert("❌ " + (err as Error));
     } finally {
       setLoading(null);
     }

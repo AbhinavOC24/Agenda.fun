@@ -1,7 +1,5 @@
-
-
 datasource db {
-  provider = "sqlite"
+  provider = "sqlite" // or sqlite for local dev
   url      = env("DATABASE_URL")
 }
 
@@ -9,249 +7,214 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Indexer state to track progress
+//
+// 🔹 Indexer progress
+//
 model IndexerState {
-  id                       Int      @id @default(autoincrement())
-  programId                String   @unique
-  lastProcessedSlot        BigInt   @default(0)
-  lastProcessedSignature   String?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                     Int      @id @default(autoincrement())
+  programId              String   @unique
+  lastProcessedSlot      BigInt   @default(0)
+  lastProcessedSignature String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
   @@map("indexer_state")
 }
 
-// Global configuration events
+//
+// 🔹 Global Config Initialization
+//
 model GlobalConfigCreated {
-  id             String   @id @default(uuid())
-  signature      String   @unique
+  id             String    @id @default(uuid())
+  signature      String    @unique
   slot           BigInt
   blockTime      DateTime?
   admin          String
   feeBps         Int
   rBurn          Int
   rGlobal        Int
-  rChar          Int
-  k              Int
   usdcMint       String
   platformWallet String
   globalTreasury String
   ts             BigInt
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
+
   @@map("global_config_created")
 }
 
-// --------------------
-// Fandom
-// --------------------
+//
+// 🔹 Fandoms
+//
 model FandomCreated {
-  id         String              @id @default(uuid())
-  signature  String              @unique
-  slot       BigInt
-  blockTime  DateTime?
-  admin      String
-  fandomId   Bytes               @unique // [u8;32]
-  name       String
-  ts         BigInt
-  createdAt  DateTime            @default(now())
+  id        String    @id @default(uuid())
+  signature String    @unique
+  slot      BigInt
+  blockTime DateTime?
+  admin     String
+  fandomId  String    @unique
+  name      String
+  ts        BigInt
+  createdAt DateTime  @default(now())
 
-  // relations
-  characters CharacterCreated[]
-  polls      PollCreated[]
+  polls PollCreated[]
 
   @@map("fandom_created")
 }
 
-// --------------------
-// Character
-// --------------------
-model CharacterCreated {
-  id             String           @id @default(uuid())
-  signature      String           @unique
+//
+// 🔹 Polls
+//
+model PollCreated {
+  id             String    @id @default(uuid())
+  signature      String    @unique
   slot           BigInt
   blockTime      DateTime?
-  charSlug       String           @unique
-  stockMint      String           @unique
-  supply         BigInt
-  treasuryVault  String
-  priceState     String
-  lastPriceFp    BigInt
-  weekStartTs    BigInt
-  ts             BigInt
-  createdAt      DateTime         @default(now())
+  pollId         String     @unique
+  fandomId       String
+  stakeYes       BigInt?   @default(0)
+  stakeNo        BigInt?   @default(0)
+  totalStake     BigInt?   @default(0)
+  creator        String
+  startTs        BigInt
+  endTs          BigInt
+  challengeEndTs BigInt
+  status         String
+  createdAt      DateTime  @default(now())
 
-  // relation to fandom
-  fandomId       Bytes
-  fandom         FandomCreated    @relation(fields: [fandomId], references: [fandomId])
-
-  // price updates
-  priceUpdates   PriceUpdate[]
-
-  @@map("character_created")
-}
-
-// --------------------
-// Price updates
-// --------------------
-model PriceUpdate {
-  id         String             @id @default(uuid())
-  signature  String             @unique
-  slot       BigInt
-  blockTime  DateTime?
-  character  String
-  priceFp    BigInt
-  ts         BigInt
-  createdAt  DateTime           @default(now())
-
-  // link to character
-  characterRef CharacterCreated? @relation(fields: [character], references: [charSlug])
-
-  @@map("price_update")
-}
-
-// --------------------
-// Stocks
-// --------------------
-model StockBought {
-  id         String   @id @default(uuid())
-  signature  String   @unique
-  slot       BigInt
-  blockTime  DateTime?
-  fandomId   Bytes
-  character  String
-  buyer      String
-  lamportsIn BigInt
-  sharesOut  BigInt
-  priceFp    BigInt
-  newSupply  BigInt
-  ts         BigInt
-  createdAt  DateTime @default(now())
-  @@map("stock_bought")
-}
-
-model StockSold {
-  id          String   @id @default(uuid())
-  signature   String   @unique
-  slot        BigInt
-  blockTime   DateTime?
-  fandomId    Bytes
-  character   String
-  seller      String
-  sharesIn    BigInt
-  lamportsOut BigInt
-  priceFp     BigInt
-  newSupply   BigInt
-  ts          BigInt
-  createdAt   DateTime @default(now())
-  @@map("stock_sold")
-}
-
-// --------------------
-// Polls
-// --------------------
-model PollCreated {
-  id              String           @id @default(uuid())
-  signature       String           @unique
-  slot            BigInt
-  blockTime       DateTime?
-  pollId          Bytes            @unique
-  creator         String
-  startTs         BigInt
-  endTs           BigInt
-  challengeEndTs  BigInt
-  status          String
-  createdAt       DateTime         @default(now())
-
-  // relation to fandom
-  fandomId        Bytes
-  fandom          FandomCreated    @relation(fields: [fandomId], references: [fandomId])
-
-  // related sub-events
-  votes           VoteCast[]
-  resolutions     PollResolved[]
-  settlements     PollSettled[]
-  disputes        DisputeOpened[]
-  rewards         RewardClaimed[]
+  fandom      FandomCreated     @relation(fields: [fandomId], references: [fandomId])
+  votes       VoteCast[]
+  disputes    DisputeOpened[]
+  resolutions PollResolved[]
+  settlements PollSettled[]
+  rewards     RewardClaimed[]
+  proposals   Proposal[]
+  receipts    ProposalReceipt[]
 
   @@map("poll_created")
 }
 
-// --------------------
-// Vote + Resolution + Reward
-// --------------------
+//
+// 🔹 Votes (stake-weighted)
+//
 model VoteCast {
-  id         String        @id @default(uuid())
-  signature  String        @unique
-  slot       BigInt
-  blockTime  DateTime?
-  voter      String
-  side       String
-  stake      BigInt
-  createdAt  DateTime      @default(now())
+  id        String    @id @default(uuid())
+  signature String    @unique
+  slot      BigInt
+  blockTime DateTime?
+  pollId    String
+  voter     String
+  side      String
+  stake     BigInt
+  createdAt DateTime  @default(now())
 
-  poll       PollCreated   @relation(fields: [pollId], references: [pollId])
-  pollId     Bytes
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
 
   @@map("vote_cast")
 }
 
-model PollResolved {
-  id        String        @id @default(uuid())
-  signature String        @unique
-  slot      BigInt
-  blockTime DateTime?
-  outcome   String
-  createdAt DateTime       @default(now())
-
-  poll      PollCreated    @relation(fields: [pollId], references: [pollId])
-  pollId    Bytes
-
-  @@map("poll_resolved")
-}
-
+//
+// 🔹 Disputes
+//
 model DisputeOpened {
-  id          String       @id @default(uuid())
-  signature   String       @unique
-  slot        BigInt
-  blockTime   DateTime?
-  side        String
-  challenger  String
-  stake       BigInt
-  createdAt   DateTime      @default(now())
+  id         String    @id @default(uuid())
+  signature  String    @unique
+  slot       BigInt
+  blockTime  DateTime?
+  pollId     String
+  side       String
+  challenger String
+  stake      BigInt
+  createdAt  DateTime  @default(now())
 
-  poll        PollCreated   @relation(fields: [pollId], references: [pollId])
-  pollId      Bytes
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
 
   @@map("dispute_opened")
 }
 
+//
+// 🔹 Poll Resolution + Settlement
+//
+model PollResolved {
+  id        String    @id @default(uuid())
+  signature String    @unique
+  slot      BigInt
+  blockTime DateTime?
+  pollId    String
+  outcome   String
+  createdAt DateTime  @default(now())
+
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
+
+  @@map("poll_resolved")
+}
+
 model PollSettled {
-  id           String       @id @default(uuid())
-  signature    String       @unique
+  id           String    @id @default(uuid())
+  signature    String    @unique
   slot         BigInt
   blockTime    DateTime?
+  pollId       String
   finalOutcome String
   totalStake   BigInt
   payoutPool   BigInt
-  createdAt    DateTime     @default(now())
+  createdAt    DateTime  @default(now())
 
-  poll         PollCreated  @relation(fields: [pollId], references: [pollId])
-  pollId       Bytes
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
 
   @@map("poll_settled")
 }
 
+//
+// 🔹 Rewards (claims)
+//
 model RewardClaimed {
-  id        String       @id @default(uuid())
-  signature String       @unique
+  id        String    @id @default(uuid())
+  signature String    @unique
   slot      BigInt
   blockTime DateTime?
+  pollId    String
   user      String
   amount    BigInt
   challenge Boolean
-  createdAt DateTime     @default(now())
+  createdAt DateTime  @default(now())
 
-  poll      PollCreated  @relation(fields: [pollId], references: [pollId])
-  pollId    Bytes
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
 
   @@map("reward_claimed")
+}
+
+//
+// 🔹 Proposal and ProposalReceipt (for challenges)
+//
+model Proposal {
+  id                String    @id @default(uuid())
+  slot              BigInt
+  signature         String    @unique
+  blockTime         DateTime?
+  pollId            String
+  side              String
+  totalStake        BigInt
+  totalParticipants BigInt
+  createdAt         DateTime  @default(now())
+
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
+
+  @@map("proposal")
+}
+
+model ProposalReceipt {
+  id           String    @id @default(uuid())
+  signature    String?   @unique
+  slot         BigInt?
+  blockTime    DateTime?
+  pollId       String
+  side         String
+  staker       String
+  amountStaked BigInt
+  claimed      Boolean
+  createdAt    DateTime  @default(now())
+
+  poll PollCreated @relation(fields: [pollId], references: [pollId])
+
+  @@map("proposal_receipt")
 }

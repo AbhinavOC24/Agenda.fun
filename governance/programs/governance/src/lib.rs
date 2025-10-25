@@ -3,7 +3,7 @@
 
 use anchor_lang::prelude::*;
 
-declare_id!("FkWGiBMPiL8Weq3LWjcRydmafUBmGhHK9dkNaGuRzmeP");
+declare_id!("HCAdk3qPeYYYG1uYyrcG9fjTCSvmewJ8KdqWTvk7HSxR");
 
 
 pub mod instructions;
@@ -45,7 +45,7 @@ pub mod governance {
         lambda_fp: i32,
         k_override: Option<i32>,
     ) -> Result<()> {
-        instructions::poll::create_poll(ctx, poll_id, start_ts,challenge_end_ts, end_ts,metadata_hash, lambda_fp, k_override)
+        instructions::poll::create_poll(ctx, poll_id,fandom_id, start_ts,challenge_end_ts, end_ts,metadata_hash, lambda_fp, k_override)
     }
 
     pub fn vote(

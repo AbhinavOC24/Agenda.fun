@@ -6,6 +6,7 @@ use crate::utils::*;
 pub fn create_poll(
     ctx: Context<CreatePoll>,
     poll_id: [u8; 32],
+    fandom_id:[u8;32],
     start_ts: i64,
     challenge_end_ts:i64,
     end_ts: i64,
@@ -41,7 +42,7 @@ pub fn create_poll(
     poll.escrow_bump=ctx.bumps.poll_escrow;
     emit!(PollCreated {
         poll_id,
-        fandom_id: fandom.key().to_bytes(),
+        fandom_id,
         creator: ctx.accounts.admin.key(),
         start_ts,
         end_ts,

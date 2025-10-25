@@ -1,14 +1,39 @@
 import { Connection, PublicKey, Logs, Context } from "@solana/web3.js";
-import { prisma } from "./prismaClient.js";
+import { BorshCoder, EventParser, Idl } from "@coral-xyz/anchor";
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { prisma } from "./prismaClient.js";
+import {
+  normalizeBytes32,
+  normalizeBytes32ToString,
+} from "./lib/convertors.js";
+
 dotenv.config();
 
-const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID!);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PROGRAM_ID = new PublicKey(
+  "HCAdk3qPeYYYG1uYyrcG9fjTCSvmewJ8KdqWTvk7HSxR"
+);
+
 const RPC_URL = process.env.RPC_URL ?? "https://api.devnet.solana.com";
+
+// --- Load IDL for event parsing ---
+const idlPath = path.resolve(
+  __dirname,
+  "../../governance/target/idl/governance.json"
+);
+const idl = JSON.parse(fs.readFileSync(idlPath, "utf8")) as Idl;
+
+const coder = new BorshCoder(idl);
+const parser = new EventParser(PROGRAM_ID, coder);
 
 async function main() {
   const connection = new Connection(RPC_URL, "confirmed");
-  console.log(`🛰 Listening to ${PROGRAM_ID.toBase58()}`);
+  console.log(`🛰 Listening to events from program ${PROGRAM_ID.toBase58()}`);
 
   connection.onLogs(PROGRAM_ID, async (log: Logs, context: Context) => {
     try {
@@ -16,237 +41,308 @@ async function main() {
       const signature = log.signature;
       const blockTime = new Date();
 
-      for (const line of log.logs) {
-        if (!line.startsWith("Program log:")) continue;
-        const content = line.replace("Program log: ", "").trim();
-        if (!content.startsWith("{")) continue;
-
-        const event = JSON.parse(content);
-        if (!event.event) continue;
-
-        console.log("📦", event.event);
-        await routeEvent(event, signature, slot, blockTime);
+      const events = parser.parseLogs(log.logs);
+      for (const ev of events) {
+        console.log("📦 Parsed Event:", ev.name, ev.data);
+        await handleEvent(
+          { event: ev.name, data: ev.data },
+          signature,
+          slot,
+          blockTime
+        );
       }
-    } catch (e) {
-      console.error("❌ parse error:", e);
+    } catch (err) {
+      console.error("❌ Error processing log:", err);
     }
   });
 }
 
-async function routeEvent(
-  e: any,
+// ---------------------------
+// 🧠 Event Router
+// ---------------------------
+async function handleEvent(
+  event: { event: string; data: any },
   signature: string,
   slot: bigint,
-  blockTime: Date | null
+  blockTime: Date
 ) {
-  const base = { signature, slot, blockTime };
-
-  switch (e.event) {
-    // ---------------------------
-    // Global Config
-    // ---------------------------
+  switch (event.event) {
+    // 🧭 GlobalConfigCreated
     case "GlobalConfigCreated":
-      await prisma.globalConfigCreated.create({
-        data: {
-          ...base,
-          admin: e.admin,
-          feeBps: e.fee_bps,
-          rBurn: e.r_burn,
-          rGlobal: e.r_global,
-          rChar: e.r_char,
-          k: e.k,
-          usdcMint: e.usdc_mint,
-          platformWallet: e.platform_wallet,
-          globalTreasury: e.global_treasury,
-          ts: BigInt(e.ts),
+      await prisma.globalConfigCreated.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          admin: event.data.admin.toString(),
+          feeBps: event.data.fee_bps,
+          rBurn: event.data.r_burn,
+          rGlobal: event.data.r_global,
+          usdcMint: event.data.usdc_mint.toString(),
+          platformWallet: event.data.platform_wallet.toString(),
+          globalTreasury: event.data.global_treasury.toString(),
+          ts: BigInt(event.data.ts),
         },
       });
       break;
 
-    // ---------------------------
-    // Fandom
-    // ---------------------------
-    case "FandomCreated":
-      await prisma.fandomCreated.create({
-        data: {
-          ...base,
-          admin: e.admin,
-          fandomId: Buffer.from(e.fandom_id),
-          name: e.name,
-          ts: BigInt(e.ts),
+    //   await prisma.pollCreated.upsert({
+    //     where: { signature },
+    //     update: {},
+    //     create: {
+    //       signature,
+    //       slot,
+    //       blockTime,
+    //       pollId: Buffer.from(event.data.poll_id),
+    //       creator: event.data.creator.toString(),
+    //       startTs: BigInt(event.data.start_ts),
+    //       endTs: BigInt(event.data.end_ts),
+    //       challengeEndTs: BigInt(event.data.challenge_end_ts),
+    //       status: event.data.status,
+    //       fandomId: normalizeBytes32ToString(event.data.fandom_id),
+    //     },
+    //   });
+    //   break;
+    // 1️⃣ FandomCreated
+    case "FandomCreated": {
+      const fandomIdStr = normalizeBytes32ToString(event.data.fandom_id);
+      console.log("=== FANDOM CREATED ===");
+      console.log("Raw fandom_id:", event.data.fandom_id);
+      console.log("Converted fandomId:", fandomIdStr);
+      console.log("fandomId length:", fandomIdStr.length);
+      console.log("fandomId hex:", Buffer.from(fandomIdStr).toString("hex"));
+
+      await prisma.fandomCreated.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          admin: event.data.admin.toString(),
+          fandomId: fandomIdStr,
+          name: event.data.name,
+          ts: BigInt(event.data.ts),
         },
       });
-      break;
 
-    // ---------------------------
-    // Character
-    // ---------------------------
-    case "CharacterCreated":
-      await prisma.characterCreated.create({
-        data: {
-          ...base,
-          fandomId: Buffer.from(e.fandom), // link to FandomCreated.fandomId
-          charSlug: e.char_slug,
-          stockMint: e.stock_mint,
-          supply: BigInt(e.supply),
-          treasuryVault: e.treasury_vault,
-          priceState: e.price_state,
-          lastPriceFp: BigInt(e.last_price_fp),
-          weekStartTs: BigInt(e.week_start_ts),
-          ts: BigInt(e.ts),
+      // Verify it was saved
+      const saved = await prisma.fandomCreated.findUnique({
+        where: { fandomId: fandomIdStr },
+      });
+      console.log("Saved fandom:", saved?.fandomId);
+      console.log("=====================\n");
+      break;
+    }
+
+    // 2️⃣ PollCreated
+    case "PollCreated": {
+      const pollFandomIdStr = normalizeBytes32ToString(event.data.fandom_id);
+      console.log("=== POLL CREATED ===");
+      console.log("Raw fandom_id:", event.data.fandom_id);
+      console.log("Converted fandomId:", pollFandomIdStr);
+      console.log("fandomId length:", pollFandomIdStr.length);
+      console.log(
+        "fandomId hex:",
+        Buffer.from(pollFandomIdStr).toString("hex")
+      );
+
+      // Check if fandom exists
+      const fandomExists = await prisma.fandomCreated.findUnique({
+        where: { fandomId: pollFandomIdStr },
+      });
+      console.log("Fandom exists?", fandomExists ? "YES" : "NO");
+
+      if (!fandomExists) {
+        console.error("❌ FANDOM NOT FOUND!");
+        console.log("Looking for fandomId:", pollFandomIdStr);
+
+        // List all fandoms
+        const allFandoms = await prisma.fandomCreated.findMany();
+        console.log(
+          "All fandoms in DB:",
+          allFandoms.map((f) => ({
+            id: f.fandomId,
+            hex: Buffer.from(f.fandomId).toString("hex"),
+          }))
+        );
+      }
+
+      await prisma.pollCreated.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          pollId: Buffer.from(event.data.poll_id),
+          creator: event.data.creator.toString(),
+          startTs: BigInt(event.data.start_ts),
+          endTs: BigInt(event.data.end_ts),
+          challengeEndTs: BigInt(event.data.challenge_end_ts),
+          status: event.data.status,
+          fandomId: pollFandomIdStr,
         },
       });
+      console.log("==================\n");
       break;
+    }
+    // 3️⃣ VoteCast
+    case "VoteCast": {
+      const pollIdBuf = Buffer.from(event.data.poll);
+      const side = event.data.side;
+      const stake = BigInt(event.data.stake);
 
-    // ---------------------------
-    // Price Update
-    // ---------------------------
-    case "PriceUpdate":
-      await prisma.priceUpdate.create({
-        data: {
-          ...base,
-          character: e.character, // references CharacterCreated.charSlug
-          priceFp: BigInt(e.price_fp),
-          ts: BigInt(e.ts),
+      // Upsert VoteCast record
+      await prisma.voteCast.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          voter: event.data.voter.toString(),
+          side,
+          stake,
+          pollId: pollIdBuf,
         },
       });
-      break;
 
-    // ---------------------------
-    // Poll Created
-    // ---------------------------
-    case "PollCreated":
-      await prisma.pollCreated.create({
-        data: {
-          ...base,
-          pollId: Buffer.from(e.poll_id),
-          fandomId: Buffer.from(e.fandom_id), // link to FandomCreated
-          creator: e.creator,
-          startTs: BigInt(e.start_ts),
-          endTs: BigInt(e.end_ts),
-          challengeEndTs: BigInt(e.challenge_end_ts),
-          status: e.status,
-        },
+      // Update poll stake totals
+      const poll = await prisma.pollCreated.findUnique({
+        where: { pollId: pollIdBuf },
       });
-      break;
 
-    // ---------------------------
-    // Vote Cast
-    // ---------------------------
-    case "VoteCast":
-      await prisma.voteCast.create({
-        data: {
-          ...base,
-          pollId: Buffer.from(e.poll_id), // link to PollCreated.pollId
-          voter: e.voter,
-          side: e.side,
-          stake: BigInt(e.stake),
-        },
-      });
-      break;
+      if (poll) {
+        const newStakeYes =
+          side === "Yes" ? (poll.stakeYes ?? 0n) + stake : poll.stakeYes ?? 0n;
+        const newStakeNo =
+          side === "No" ? (poll.stakeNo ?? 0n) + stake : poll.stakeNo ?? 0n;
+        const newTotal = newStakeYes + newStakeNo;
 
-    // ---------------------------
-    // Poll Resolved
-    // ---------------------------
+        await prisma.pollCreated.update({
+          where: { pollId: pollIdBuf },
+          data: {
+            stakeYes: newStakeYes,
+            stakeNo: newStakeNo,
+            totalStake: newTotal,
+          },
+        });
+      }
+      break;
+    }
+
+    // 4️⃣ PollResolved
     case "PollResolved":
-      await prisma.pollResolved.create({
-        data: {
-          ...base,
-          pollId: Buffer.from(e.poll_id),
-          outcome: e.outcome,
+      await prisma.pollResolved.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          outcome: event.data.outcome,
+          pollId: Buffer.from(event.data.poll),
         },
       });
       break;
 
-    // ---------------------------
-    // Dispute Opened
-    // ---------------------------
-    case "DisputeOpened":
-      await prisma.disputeOpened.create({
-        data: {
-          ...base,
-          pollId: Buffer.from(e.poll_id),
-          side: e.side,
-          challenger: e.challenger,
-          stake: BigInt(e.stake),
-        },
-      });
-      break;
-
-    // ---------------------------
-    // Poll Settled
-    // ---------------------------
+    // 5️⃣ PollSettled
     case "PollSettled":
-      await prisma.pollSettled.create({
-        data: {
-          ...base,
-          pollId: Buffer.from(e.poll_id),
-          finalOutcome: e.final_outcome,
-          totalStake: BigInt(e.total_stake),
-          payoutPool: BigInt(e.payout_pool),
+      await prisma.pollSettled.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          finalOutcome: event.data.finalOutcome,
+          totalStake: BigInt(event.data.totalStake),
+          payoutPool: BigInt(event.data.payoutPool),
+          pollId: Buffer.from(event.data.poll),
         },
       });
       break;
 
-    // ---------------------------
-    // Reward Claimed
-    // ---------------------------
+    // 6️⃣ RewardClaimed
     case "RewardClaimed":
-      await prisma.rewardClaimed.create({
-        data: {
-          ...base,
-          pollId: Buffer.from(e.poll_id),
-          user: e.user,
-          amount: BigInt(e.amount),
-          challenge: e.challenge,
+      await prisma.rewardClaimed.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          user: event.data.user.toString(),
+          amount: BigInt(event.data.amount),
+          challenge: event.data.challenge,
+          pollId: Buffer.from(event.data.poll),
         },
       });
       break;
 
-    // ---------------------------
-    // Stock Bought
-    // ---------------------------
-    case "StockBought":
-      await prisma.stockBought.create({
-        data: {
-          ...base,
-          fandomId: Buffer.from(e.fandom_id),
-          character: e.character,
-          buyer: e.buyer,
-          lamportsIn: BigInt(e.lamports_in),
-          sharesOut: BigInt(e.shares_out),
-          priceFp: BigInt(e.price_fp),
-          newSupply: BigInt(e.new_supply),
-          ts: BigInt(e.ts),
+    // 7️⃣ DisputeOpened
+    case "DisputeOpened":
+      await prisma.disputeOpened.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          pollId: Buffer.from(event.data.poll),
+          side: event.data.side,
+          challenger: event.data.challenger.toString(),
+          stake: BigInt(event.data.stake),
         },
       });
       break;
 
-    // ---------------------------
-    // Stock Sold
-    // ---------------------------
-    case "StockSold":
-      await prisma.stockSold.create({
-        data: {
-          ...base,
-          fandomId: Buffer.from(e.fandom_id),
-          character: e.character,
-          seller: e.seller,
-          sharesIn: BigInt(e.shares_in),
-          lamportsOut: BigInt(e.lamports_out),
-          priceFp: BigInt(e.price_fp),
-          newSupply: BigInt(e.new_supply),
-          ts: BigInt(e.ts),
+    // 8️⃣ ProposalCreated
+    case "Proposal":
+      await prisma.proposal.upsert({
+        where: { signature },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          pollId: Buffer.from(event.data.poll),
+          side: event.data.side,
+          totalStake: BigInt(event.data.totalStake),
+          totalParticipants: BigInt(event.data.totalParticipants),
         },
       });
       break;
 
-    // ---------------------------
-    // Default
-    // ---------------------------
+    // 9️⃣ ProposalReceipt
+    case "ProposalReceipt":
+      await prisma.proposalReceipt.upsert({
+        where: {
+          signature:
+            signature || `${event.data.staker.toString()}-${event.data.poll}`,
+        },
+        update: {},
+        create: {
+          signature,
+          slot,
+          blockTime,
+          pollId: Buffer.from(event.data.poll),
+          side: event.data.side,
+          staker: event.data.staker.toString(),
+          amountStaked: BigInt(event.data.amountStaked),
+          claimed: event.data.claimed,
+        },
+      });
+      break;
+
     default:
-      console.log("⚠️ Unhandled event:", e.event);
+      console.log("⚠️ Unhandled event type:", event.event);
   }
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error("Fatal indexer error:", err);
+});
